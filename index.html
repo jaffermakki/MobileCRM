@@ -300,7 +300,14 @@ function setSupabaseCredentials(url, anon){
   localStorage.setItem('mshop_supabase_anon', (anon||'').trim());
 }
 
-let supabase = null;
+// IMPORTANT: this is named `supabaseClient`, NOT `supabase`, on purpose.
+// The Supabase UMD library attaches itself to `window.supabase` when it
+// loads from the CDN. If our own code also declared a global variable
+// named `supabase` (as an earlier version of this file did), the two
+// can collide depending on script load timing — sometimes causing the
+// library's global to appear "missing" even though it loaded fine.
+// Keeping our variable name completely different avoids that entirely.
+let supabaseClient = null;
 let cloudMode = false;
 
 async function initCloud(){
@@ -343,9 +350,18 @@ async function initCloud(){
       'https://unpkg.com/@supabase/supabase-js@2',
       'https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js',
     ]);
+
+    // In rare cases the script's onload event can fire one tick before the
+    // UMD bundle finishes attaching window.supabase. Give it a brief moment
+    // and check a few times before giving up, rather than failing instantly.
+    let attempts = 0;
+    while(!window.supabase && attempts < 10){
+      await new Promise(r=>setTimeout(r,50));
+      attempts++;
+    }
     if(!window.supabase){ throw new Error('Supabase library loaded but window.supabase is missing — this can happen if a browser extension or ad-blocker stripped the script. Try disabling ad-blockers for this page.'); }
 
-    supabase = window.supabase.createClient(url.replace(/\/$/,''), anon);
+    supabaseClient = window.supabase.createClient(url.replace(/\/$/,''), anon);
 
     // Test connection against each required table individually so we can
     // tell the user exactly which table is missing, instead of one vague
@@ -354,7 +370,7 @@ async function initCloud(){
     const requiredTables = ['crm_settings','crm_products','crm_customers','crm_repairs','crm_invoices'];
     const missingTables = [];
     for(const t of requiredTables){
-      const { error } = await supabase.from(t).select('id').limit(1);
+      const { error } = await supabaseClient.from(t).select('id').limit(1);
       if(error){
         // 42P01 = undefined_table in Postgres
         if(error.code === '42P01' || /does not exist/i.test(error.message)){
@@ -417,7 +433,7 @@ function disconnectCloud(){
   if(!confirm('Disconnect from cloud? Your local data stays safe — this just stops syncing.')) return;
   setSupabaseCredentials('','');
   cloudMode=false;
-  supabase=null;
+  supabaseClient=null;
   showCloudBanner('offline');
   renderSettings(document.getElementById('page-content'));
 }
@@ -505,19 +521,19 @@ function showCloudBanner(state, msg=''){
 
 async function cloudGet(table, id){
   if(!cloudMode) return null;
-  const { data, error } = await supabase.from(table).select('data').eq('id',id).single();
+  const { data, error } = await supabaseClient.from(table).select('data').eq('id',id).single();
   if(error) return null;
   return data?.data ?? null;
 }
 
 async function cloudSet(table, id, val){
   if(!cloudMode) return;
-  await supabase.from(table).upsert({ id, data: val, updated_at: new Date().toISOString() });
+  await supabaseClient.from(table).upsert({ id, data: val, updated_at: new Date().toISOString() });
 }
 
 async function cloudGetAll(table){
   if(!cloudMode) return null;
-  const { data, error } = await supabase.from(table).select('data');
+  const { data, error } = await supabaseClient.from(table).select('data');
   if(error || !data) return null;
   return data.map(r=>r.data);
 }
@@ -526,7 +542,7 @@ async function cloudSetAll(table, arr){
   if(!cloudMode || !arr) return;
   // Upsert all rows. Each item must have an `id` field.
   const rows = arr.map(item=>({ id:item.id, data:item, updated_at:new Date().toISOString() }));
-  if(rows.length) await supabase.from(table).upsert(rows);
+  if(rows.length) await supabaseClient.from(table).upsert(rows);
 }
 
 // ── Real-time subscriptions ────────────────────────────────
@@ -534,7 +550,7 @@ function subscribeRealtime(){
   if(!cloudMode) return;
   // Listen for changes to customers, invoices, repairs — instant across devices
   ['crm_customers','crm_invoices','crm_repairs'].forEach(table=>{
-    supabase.channel(table)
+    supabaseClient.channel(table)
       .on('postgres_changes', { event:'*', schema:'public', table }, async ()=>{
         showCloudBanner('syncing');
         await syncFromCloud();
