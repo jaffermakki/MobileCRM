@@ -468,6 +468,59 @@ function showFileProtocolHelp(){
 }
 
 /**
+ * Focused fix for "permission denied for table X" / RLS errors.
+ *
+ * The most common cause: the setup SQL was run more than once, and
+ * `CREATE POLICY` has no "IF NOT EXISTS" option in Postgres — so the
+ * second run hit "policy already exists" on an early table and the
+ * whole script aborted right there, leaving later tables with RLS
+ * turned on but no policy at all (which is exactly "permission denied").
+ *
+ * This snippet is safe to run any number of times: it drops each policy
+ * first (ignoring "doesn't exist" errors) before recreating it.
+ */
+function showPolicyFixHelp(){
+  const sql = `-- Safe to run as many times as needed.
+DROP POLICY IF EXISTS "allow_all" ON crm_settings;
+DROP POLICY IF EXISTS "allow_all" ON crm_products;
+DROP POLICY IF EXISTS "allow_all" ON crm_customers;
+DROP POLICY IF EXISTS "allow_all" ON crm_repairs;
+DROP POLICY IF EXISTS "allow_all" ON crm_invoices;
+
+ALTER TABLE crm_settings  ENABLE ROW LEVEL SECURITY;
+ALTER TABLE crm_products  ENABLE ROW LEVEL SECURITY;
+ALTER TABLE crm_customers ENABLE ROW LEVEL SECURITY;
+ALTER TABLE crm_repairs   ENABLE ROW LEVEL SECURITY;
+ALTER TABLE crm_invoices  ENABLE ROW LEVEL SECURITY;
+
+CREATE POLICY "allow_all" ON crm_settings  FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "allow_all" ON crm_products  FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "allow_all" ON crm_customers FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "allow_all" ON crm_repairs   FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "allow_all" ON crm_invoices  FOR ALL USING (true) WITH CHECK (true);`;
+
+  const html = `
+  <div style="font-size:13px;line-height:1.7;color:var(--text2)">
+    <div class="alert alert-amber mb-3">
+      This almost always happens when the setup SQL was run more than once. In Postgres, <code>CREATE POLICY</code> has no "if not exists" option — so re-running the original script can fail partway through and leave some tables with security turned on but no permission rule at all. That's what "permission denied" means here.
+    </div>
+    <p style="margin-bottom:8px">This version is safe to run <strong>any number of times</strong> — it removes each old rule first, then adds it back fresh:</p>
+    <pre id="policy-fix-sql" style="background:var(--bg);border:1px solid var(--border2);border-radius:6px;padding:12px;font-size:11px;color:#a8d8a8;overflow-x:auto;line-height:1.6;white-space:pre">${sql}</pre>
+    <button class="btn btn-primary btn-sm mt-2" onclick="
+      navigator.clipboard.writeText(document.getElementById('policy-fix-sql').textContent);
+      this.textContent='✓ Copied!';setTimeout(()=>this.textContent='Copy SQL',2000)">
+      Copy SQL
+    </button>
+    <ol style="padding-left:18px;margin-top:14px">
+      <li>Go to your Supabase project → <strong>SQL Editor</strong> → New query</li>
+      <li>Paste the SQL above → click <strong>Run</strong></li>
+      <li>Come back here and click <strong>"Save & Connect"</strong> again</li>
+    </ol>
+  </div>`;
+  openModal('Fix "Permission Denied" Error', html, '<button class="btn btn-secondary" onclick="closeModal()">Close</button>', true);
+}
+
+/**
  * Loads an external script, trying multiple CDN mirrors in order.
  * Accepts either a single URL (string) or an array of fallback URLs —
  * if the first CDN is blocked (corporate firewall, ad-blocker, or some
@@ -3203,10 +3256,19 @@ CREATE TABLE IF NOT EXISTS crm_customers (id text PRIMARY KEY, data jsonb, updat
 CREATE TABLE IF NOT EXISTS crm_repairs   (id text PRIMARY KEY, data jsonb, updated_at timestamptz DEFAULT now());
 CREATE TABLE IF NOT EXISTS crm_invoices  (id text PRIMARY KEY, data jsonb, updated_at timestamptz DEFAULT now());
 
--- Allow real-time (enable for each table)
-ALTER PUBLICATION supabase_realtime ADD TABLE crm_customers;
-ALTER PUBLICATION supabase_realtime ADD TABLE crm_repairs;
-ALTER PUBLICATION supabase_realtime ADD TABLE crm_invoices;
+-- Allow real-time (safe to re-run: skips tables already added)
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname='supabase_realtime' AND tablename='crm_customers') THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE crm_customers;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname='supabase_realtime' AND tablename='crm_repairs') THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE crm_repairs;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname='supabase_realtime' AND tablename='crm_invoices') THEN
+    ALTER PUBLICATION supabase_realtime ADD TABLE crm_invoices;
+  END IF;
+END $$;
 
 -- Row-level security (make tables accessible with anon key)
 ALTER TABLE crm_settings  ENABLE ROW LEVEL SECURITY;
@@ -3214,6 +3276,17 @@ ALTER TABLE crm_products  ENABLE ROW LEVEL SECURITY;
 ALTER TABLE crm_customers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE crm_repairs   ENABLE ROW LEVEL SECURITY;
 ALTER TABLE crm_invoices  ENABLE ROW LEVEL SECURITY;
+
+-- Policies: drop-then-create so this script is safe to run any number
+-- of times (CREATE POLICY has no "IF NOT EXISTS" option in Postgres,
+-- so re-running without the DROP first would error out and abort the
+-- rest of the script, leaving some tables without a policy at all —
+-- which is the exact "permission denied" error this fixes).
+DROP POLICY IF EXISTS "allow_all" ON crm_settings;
+DROP POLICY IF EXISTS "allow_all" ON crm_products;
+DROP POLICY IF EXISTS "allow_all" ON crm_customers;
+DROP POLICY IF EXISTS "allow_all" ON crm_repairs;
+DROP POLICY IF EXISTS "allow_all" ON crm_invoices;
 
 CREATE POLICY "allow_all" ON crm_settings  FOR ALL USING (true) WITH CHECK (true);
 CREATE POLICY "allow_all" ON crm_products  FOR ALL USING (true) WITH CHECK (true);
@@ -3242,6 +3315,7 @@ CREATE POLICY "allow_all" ON crm_invoices  FOR ALL USING (true) WITH CHECK (true
         <button class="btn btn-primary" onclick="saveAndConnectCloud()" id="cloud-connect-btn">🔌 Save & Connect</button>
         <button class="btn btn-secondary btn-sm" onclick="disconnectCloud()" style="margin-left:6px">Disconnect</button>
         <button class="btn btn-secondary btn-sm" onclick="showFileProtocolHelp()" style="margin-left:6px">❓ Cloud sync isn't working?</button>
+        <button class="btn btn-secondary btn-sm" onclick="showPolicyFixHelp()" style="margin-left:6px">🔧 Fix "Permission Denied" Error</button>
         ${location.protocol==='file:'?`
         <div class="alert alert-amber mt-2" style="font-size:12px">
           ⚠️ This file is currently open directly from disk (<code>file://</code>). Cloud sync usually cannot work this way — click "Cloud sync isn't working?" above for the fix.
@@ -3492,33 +3566,11 @@ function globalCustomerSearch(q){
 // ══════════════════════════════════════════════════════════
 // CLOUD HELPERS
 // ══════════════════════════════════════════════════════════
-
-function copySQL(){
-  const sql=`CREATE TABLE IF NOT EXISTS crm_settings  (id text PRIMARY KEY, data jsonb, updated_at timestamptz DEFAULT now());
-CREATE TABLE IF NOT EXISTS crm_products  (id text PRIMARY KEY, data jsonb, updated_at timestamptz DEFAULT now());
-CREATE TABLE IF NOT EXISTS crm_customers (id text PRIMARY KEY, data jsonb, updated_at timestamptz DEFAULT now());
-CREATE TABLE IF NOT EXISTS crm_repairs   (id text PRIMARY KEY, data jsonb, updated_at timestamptz DEFAULT now());
-CREATE TABLE IF NOT EXISTS crm_invoices  (id text PRIMARY KEY, data jsonb, updated_at timestamptz DEFAULT now());
-
-ALTER PUBLICATION supabase_realtime ADD TABLE crm_customers;
-ALTER PUBLICATION supabase_realtime ADD TABLE crm_repairs;
-ALTER PUBLICATION supabase_realtime ADD TABLE crm_invoices;
-
-ALTER TABLE crm_settings  ENABLE ROW LEVEL SECURITY;
-ALTER TABLE crm_products  ENABLE ROW LEVEL SECURITY;
-ALTER TABLE crm_customers ENABLE ROW LEVEL SECURITY;
-ALTER TABLE crm_repairs   ENABLE ROW LEVEL SECURITY;
-ALTER TABLE crm_invoices  ENABLE ROW LEVEL SECURITY;
-
-CREATE POLICY "allow_all" ON crm_settings  FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "allow_all" ON crm_products  FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "allow_all" ON crm_customers FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "allow_all" ON crm_repairs   FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "allow_all" ON crm_invoices  FOR ALL USING (true) WITH CHECK (true);`;
-  navigator.clipboard.writeText(sql).then(()=>{
-    showAlert('global-alert','✓ SQL copied to clipboard — paste it in Supabase SQL Editor','green');
-  }).catch(()=> alert('Copy failed — please copy the SQL manually from the text box'));
-}
+// (SQL setup script lives only in the Settings → Cloud Sync panel HTML
+// — the "Copy SQL" button there reads directly from that displayed
+// block, so there is exactly one copy of the SQL in this file. A
+// second, separate copy used to exist here as dead code and could
+// silently drift out of sync with the real one — removed.)
 
 // ── Logo upload & display ──────────────────────────────────
 function handleLogoUpload(input){
