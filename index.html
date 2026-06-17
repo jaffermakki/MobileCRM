@@ -438,6 +438,70 @@ function disconnectCloud(){
   renderSettings(document.getElementById('page-content'));
 }
 
+function openDiagnosticModal(){
+  const html = `<div id="diagnostic-result"><p style="color:var(--text2)">Running diagnostic…</p></div>`;
+  openModal('Live Cloud Diagnostic', html, '<button class="btn btn-secondary" onclick="closeModal()">Close</button>', true);
+  runCloudDiagnostic();
+}
+
+/**
+ * Runs a live diagnostic against the configured Supabase project and
+ * shows the RAW error response from PostgREST — not our own wrapped
+ * message — since the raw response often contains details (error code,
+ * hint, exact role) that pin down issues a generic message can't.
+ */
+async function runCloudDiagnostic(){
+  const url = getSupabaseUrl();
+  const anon = getSupabaseAnon();
+  const resultEl = document.getElementById('diagnostic-result');
+  if(resultEl) resultEl.innerHTML = '<p style="color:var(--text2)">Running diagnostic…</p>';
+
+  if(!url || !anon){
+    if(resultEl) resultEl.innerHTML = '<div class="alert alert-red">No credentials saved yet — enter your URL and key above first.</div>';
+    return;
+  }
+
+  let report = [];
+  report.push(`<strong>Project URL:</strong> ${escH(url)}`);
+  report.push(`<strong>Anon key (first 20 chars):</strong> ${escH(anon.slice(0,20))}...`);
+
+  try {
+    // Call the REST endpoint directly with fetch — bypasses our own
+    // wrapping entirely so we see exactly what Supabase itself returns.
+    const resp = await fetch(`${url.replace(/\/$/,'')}/rest/v1/crm_settings?select=id&limit=1`, {
+      headers: { 'apikey': anon, 'Authorization': `Bearer ${anon}` }
+    });
+    const body = await resp.json().catch(()=>null);
+    report.push(`<strong>HTTP Status:</strong> ${resp.status} ${resp.statusText}`);
+    if(body){
+      report.push(`<strong>Raw response:</strong><pre style="background:var(--bg);border:1px solid var(--border2);border-radius:6px;padding:10px;font-size:11px;overflow-x:auto;margin-top:6px">${escH(JSON.stringify(body,null,2))}</pre>`);
+    }
+    if(resp.status === 200){
+      report.push('<div class="alert alert-green mt-2">✅ This table is reachable with your anon key right now. If the app still shows an error, click "Save & Connect" again to retest, or refresh this page.</div>');
+    } else if(resp.status === 401){
+      report.push('<div class="alert alert-red mt-2">401 Unauthorized — your anon key is being rejected. Double-check you copied the "anon public" key from Settings → API, not the service_role key, and that there are no extra spaces.</div>');
+    } else if(resp.status === 404){
+      report.push('<div class="alert alert-red mt-2">404 Not Found — either the table "crm_settings" does not exist in this project, or the Project URL is pointing at the wrong project. Double check both in Supabase → Settings → API.</div>');
+    } else if(resp.status === 403 || (body && /permission denied/i.test(JSON.stringify(body)))){
+      report.push('<div class="alert alert-red mt-2">Permission denied confirmed directly from Supabase. This means a policy genuinely is not in place on this exact table in this exact project. Run the diagnostic SQL query below in your SQL Editor to see what policies actually exist right now.</div>');
+    }
+  } catch(e){
+    report.push(`<div class="alert alert-red mt-2">Network-level error: ${escH(e.message)}. This usually means the Project URL is wrong/unreachable, or the request was blocked (CORS, ad-blocker, or firewall).</div>`);
+  }
+
+  report.push(`
+    <p style="margin-top:14px;font-weight:700;color:var(--text)">Run this in Supabase SQL Editor to see what's actually configured:</p>
+    <pre id="diag-sql" style="background:var(--bg);border:1px solid var(--border2);border-radius:6px;padding:10px;font-size:11px;overflow-x:auto;margin-top:6px">SELECT schemaname, tablename, policyname, roles, cmd
+FROM pg_policies WHERE tablename = 'crm_settings';
+
+SELECT schemaname, tablename, rowsecurity
+FROM pg_tables WHERE tablename = 'crm_settings';</pre>
+    <button class="btn btn-secondary btn-sm mt-2" onclick="navigator.clipboard.writeText(document.getElementById('diag-sql').textContent);this.textContent='✓ Copied!';setTimeout(()=>this.textContent='Copy SQL',2000)">Copy SQL</button>
+  `);
+
+  if(resultEl) resultEl.innerHTML = report.join('<div style="margin:8px 0"></div>');
+}
+
 function showFileProtocolHelp(){
   const isFile = location.protocol === 'file:';
   const html = `
@@ -3316,6 +3380,7 @@ CREATE POLICY "allow_all" ON crm_invoices  FOR ALL USING (true) WITH CHECK (true
         <button class="btn btn-secondary btn-sm" onclick="disconnectCloud()" style="margin-left:6px">Disconnect</button>
         <button class="btn btn-secondary btn-sm" onclick="showFileProtocolHelp()" style="margin-left:6px">❓ Cloud sync isn't working?</button>
         <button class="btn btn-secondary btn-sm" onclick="showPolicyFixHelp()" style="margin-left:6px">🔧 Fix "Permission Denied" Error</button>
+        <button class="btn btn-secondary btn-sm" onclick="openDiagnosticModal()" style="margin-left:6px">🔍 Run Live Diagnostic</button>
         ${location.protocol==='file:'?`
         <div class="alert alert-amber mt-2" style="font-size:12px">
           ⚠️ This file is currently open directly from disk (<code>file://</code>). Cloud sync usually cannot work this way — click "Cloud sync isn't working?" above for the fix.
