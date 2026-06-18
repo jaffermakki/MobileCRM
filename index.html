@@ -382,26 +382,32 @@ async function initCloud(){
     // failure. This is the #1 reason sync silently fails: the SQL setup
     // script wasn't run, or was only partially run.
     //
-    // IMPORTANT: check authentication failures FIRST, before the generic
-    // "permission denied" text match. Postgres surfaces invalid/rejected
-    // API keys as a plain "permission denied" message too — it does NOT
-    // always mention JWT or auth explicitly — so a message-text-only check
-    // was previously misclassifying a rejected anon key as an RLS policy
-    // problem, sending people to fix the wrong thing entirely.
+    // Classification order matters here. Postgres/PostgREST can return
+    // "permission denied" for an RLS/policy issue under EITHER a 401 or
+    // 403 HTTP status — the status code alone doesn't reliably tell you
+    // which kind of failure occurred. So check the literal message text
+    // first: "permission denied for table X" is Postgres' specific,
+    // unambiguous wording for missing/blocking RLS policies and grants.
+    // Only treat it as a key/auth problem if the message itself talks
+    // about the key/token (JWT, api key, invalid signature, expired) —
+    // not just because the status happened to be 401.
     const requiredTables = ['crm_settings','crm_products','crm_customers','crm_repairs','crm_invoices'];
     const missingTables = [];
     for(const t of requiredTables){
       const { error, status } = await supabaseClient.from(t).select('id').limit(1);
       if(error){
-        const isAuthFailure = status === 401 || status === 403 && /JWT|api key|invalid/i.test(error.message)
-          || error.code === 'PGRST301' || /JWT|invalid api key|invalid_token/i.test(error.message);
+        const isPermissionDenied = /permission denied/i.test(error.message);
+        const isKeyAuthFailure = !isPermissionDenied && (
+          error.code === 'PGRST301' ||
+          /invalid api key|invalid_token|jwt expired|invalid jwt|invalid signature/i.test(error.message)
+        );
         // 42P01 = undefined_table in Postgres
         if(error.code === '42P01' || /does not exist/i.test(error.message)){
           missingTables.push(t);
-        } else if(isAuthFailure){
-          throw new Error(`Your anon key was rejected (HTTP ${status||'?'}) — Supabase error: "${error.message}". This means the key itself is wrong, expired, or doesn't match this project — it is NOT a Row Level Security / policy problem. Go to Supabase → Settings → API and copy the "anon public" key again carefully (watch for trailing spaces or a partial copy), then click Save & Connect again.`);
-        } else if(/permission denied|RLS/i.test(error.message)){
-          throw new Error(`Permission denied on table "${t}" — Row Level Security policy is blocking access. Re-run the SQL setup script's CREATE POLICY lines. (${error.message})`);
+        } else if(isPermissionDenied){
+          throw new Error(`Permission denied on table "${t}" (HTTP ${status||'?'}) — your key was accepted, but no Row Level Security policy grants it access. This means the policy from the setup SQL isn't actually applied to this table. Use "🔧 Fix Permission Denied Error" below to re-apply it. (${error.message})`);
+        } else if(isKeyAuthFailure){
+          throw new Error(`Your anon key was rejected (HTTP ${status||'?'}) — Supabase error: "${error.message}". This means the key itself is invalid, expired, or doesn't match this project. Go to Supabase → Settings → API and copy the key again carefully, then click Save & Connect again.`);
         } else {
           throw new Error(`Error on table "${t}" (HTTP ${status||'?'}): ${error.message}`);
         }
@@ -512,14 +518,21 @@ async function runCloudDiagnostic(){
     if(body){
       report.push(`<strong>Raw response:</strong><pre style="background:var(--bg);border:1px solid var(--border2);border-radius:6px;padding:10px;font-size:11px;overflow-x:auto;margin-top:6px">${escH(JSON.stringify(body,null,2))}</pre>`);
     }
+    const bodyHasPermissionDenied = body && /permission denied/i.test(JSON.stringify(body));
     if(resp.status === 200){
       report.push('<div class="alert alert-green mt-2">✅ This table is reachable with your anon key right now. If the app still shows an error, click "Save & Connect" again to retest, or refresh this page.</div>');
+    } else if(bodyHasPermissionDenied){
+      // Check this BEFORE generic status-code branches — Supabase can
+      // return "permission denied" (a pure RLS/grants issue, key is fine)
+      // under a 401 status just as easily as under 403, so the raw
+      // status code alone is not a reliable way to tell these apart.
+      report.push(`<div class="alert alert-red mt-2">Permission denied confirmed directly from Supabase (HTTP ${resp.status}) — your key was accepted, but no policy on this table grants access. This is a genuine RLS/policy issue, NOT a bad key. Run the diagnostic SQL below in your SQL Editor to see exactly what policies exist on this table right now.</div>`);
     } else if(resp.status === 401){
-      report.push('<div class="alert alert-red mt-2">401 Unauthorized — your anon key is being rejected. Double-check you copied the "anon public" key from Settings → API, not the service_role key, and that there are no extra spaces.</div>');
+      report.push('<div class="alert alert-red mt-2">401 Unauthorized with no "permission denied" text — this points to the key itself being rejected outright. Double-check you copied the right key from Settings → API and there are no extra spaces.</div>');
     } else if(resp.status === 404){
       report.push('<div class="alert alert-red mt-2">404 Not Found — either the table "crm_settings" does not exist in this project, or the Project URL is pointing at the wrong project. Double check both in Supabase → Settings → API.</div>');
-    } else if(resp.status === 403 || (body && /permission denied/i.test(JSON.stringify(body)))){
-      report.push('<div class="alert alert-red mt-2">Permission denied confirmed directly from Supabase. This means a policy genuinely is not in place on this exact table in this exact project. Run the diagnostic SQL query below in your SQL Editor to see what policies actually exist right now.</div>');
+    } else if(resp.status === 403){
+      report.push('<div class="alert alert-red mt-2">403 Forbidden — access blocked. Check the raw response above for the exact reason.</div>');
     }
   } catch(e){
     report.push(`<div class="alert alert-red mt-2">Network-level error: ${escH(e.message)}. This usually means the Project URL is wrong/unreachable, or the request was blocked (CORS, ad-blocker, or firewall).</div>`);
