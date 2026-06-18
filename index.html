@@ -335,8 +335,22 @@ async function initCloud(){
     showCloudBanner('error', `Project URL looks wrong: "${url}". It should look like https://abcdefgh.supabase.co with no extra path.`);
     return;
   }
-  if(!anon.startsWith('eyJ')){
-    showCloudBanner('error', `Anon key looks wrong — it should start with "eyJ" (it's a JWT token). Check you copied the "anon / public" key, not the service_role key.`);
+  // Supabase now issues two possible key formats depending on when the
+  // project was created: the legacy JWT-style anon key (starts "eyJ...")
+  // or the newer publishable key (starts "sb_publishable_..."). Both are
+  // valid public keys — only reject something that matches neither AND
+  // looks nothing like either pattern, so we don't block a real key.
+  const looksLikeLegacyJWT = anon.startsWith('eyJ');
+  const looksLikePublishable = anon.startsWith('sb_publishable_');
+  if(!looksLikeLegacyJWT && !looksLikePublishable){
+    showCloudBanner('error', `Anon key format not recognized. It should start with either "eyJ" (older projects) or "sb_publishable_" (newer projects). Check you copied the "anon public" / "publishable" key from Settings → API, not the secret/service_role key.`);
+    return;
+  }
+  // The secret/service_role key should never be used in browser-side code —
+  // catch this specific, very common mistake with a clear message instead
+  // of letting it fail as a generic 401 later.
+  if(anon.startsWith('sb_secret_') || /service_role/i.test(anon)){
+    showCloudBanner('error', `This looks like a SECRET key, not the public anon/publishable key. Never use the secret key in a browser app — go to Settings → API and copy the "anon public" or "publishable" key instead.`);
     return;
   }
 
@@ -367,20 +381,29 @@ async function initCloud(){
     // tell the user exactly which table is missing, instead of one vague
     // failure. This is the #1 reason sync silently fails: the SQL setup
     // script wasn't run, or was only partially run.
+    //
+    // IMPORTANT: check authentication failures FIRST, before the generic
+    // "permission denied" text match. Postgres surfaces invalid/rejected
+    // API keys as a plain "permission denied" message too — it does NOT
+    // always mention JWT or auth explicitly — so a message-text-only check
+    // was previously misclassifying a rejected anon key as an RLS policy
+    // problem, sending people to fix the wrong thing entirely.
     const requiredTables = ['crm_settings','crm_products','crm_customers','crm_repairs','crm_invoices'];
     const missingTables = [];
     for(const t of requiredTables){
-      const { error } = await supabaseClient.from(t).select('id').limit(1);
+      const { error, status } = await supabaseClient.from(t).select('id').limit(1);
       if(error){
+        const isAuthFailure = status === 401 || status === 403 && /JWT|api key|invalid/i.test(error.message)
+          || error.code === 'PGRST301' || /JWT|invalid api key|invalid_token/i.test(error.message);
         // 42P01 = undefined_table in Postgres
         if(error.code === '42P01' || /does not exist/i.test(error.message)){
           missingTables.push(t);
-        } else if(error.code === 'PGRST301' || /JWT/i.test(error.message)){
-          throw new Error(`Authentication failed — your anon key may be incorrect. (${error.message})`);
+        } else if(isAuthFailure){
+          throw new Error(`Your anon key was rejected (HTTP ${status||'?'}) — Supabase error: "${error.message}". This means the key itself is wrong, expired, or doesn't match this project — it is NOT a Row Level Security / policy problem. Go to Supabase → Settings → API and copy the "anon public" key again carefully (watch for trailing spaces or a partial copy), then click Save & Connect again.`);
         } else if(/permission denied|RLS/i.test(error.message)){
           throw new Error(`Permission denied on table "${t}" — Row Level Security policy is blocking access. Re-run the SQL setup script's CREATE POLICY lines. (${error.message})`);
         } else {
-          throw new Error(`Error on table "${t}": ${error.message}`);
+          throw new Error(`Error on table "${t}" (HTTP ${status||'?'}): ${error.message}`);
         }
       }
     }
@@ -468,10 +491,23 @@ async function runCloudDiagnostic(){
   try {
     // Call the REST endpoint directly with fetch — bypasses our own
     // wrapping entirely so we see exactly what Supabase itself returns.
-    const resp = await fetch(`${url.replace(/\/$/,'')}/rest/v1/crm_settings?select=id&limit=1`, {
-      headers: { 'apikey': anon, 'Authorization': `Bearer ${anon}` }
-    });
+    //
+    // Header handling differs by key format: legacy JWT-style anon keys
+    // (eyJ...) are expected on BOTH the apikey header and the
+    // Authorization: Bearer header. But the newer publishable key format
+    // (sb_publishable_...) must go on the apikey header ONLY — if it's
+    // also sent on Authorization: Bearer, Supabase's gateway tries to
+    // parse it as a JWT, fails, and returns 401 even though the key
+    // itself is completely valid. This exact mismatch is a documented,
+    // common cause of "key looks right but still gets 401".
+    const isPublishableKey = anon.startsWith('sb_publishable_');
+    const headers = isPublishableKey
+      ? { 'apikey': anon }
+      : { 'apikey': anon, 'Authorization': `Bearer ${anon}` };
+
+    const resp = await fetch(`${url.replace(/\/$/,'')}/rest/v1/crm_settings?select=id&limit=1`, { headers });
     const body = await resp.json().catch(()=>null);
+    report.push(`<strong>Key format detected:</strong> ${isPublishableKey?'New publishable key (apikey header only)':'Legacy JWT anon key (apikey + Bearer headers)'}`);
     report.push(`<strong>HTTP Status:</strong> ${resp.status} ${resp.statusText}`);
     if(body){
       report.push(`<strong>Raw response:</strong><pre style="background:var(--bg);border:1px solid var(--border2);border-radius:6px;padding:10px;font-size:11px;overflow-x:auto;margin-top:6px">${escH(JSON.stringify(body,null,2))}</pre>`);
@@ -3304,8 +3340,17 @@ function renderSettings(c){
           <li>Click <strong>"New Project"</strong> → choose any name (e.g. "mobile-shop-crm") → set a database password → Create</li>
           <li>Wait ~2 minutes for it to provision</li>
           <li>Go to <strong>Settings → API</strong> in your project</li>
-          <li>Copy the <strong>Project URL</strong> and the <strong>anon/public key</strong></li>
+          <li>Copy the <strong>Project URL</strong></li>
+          <li>For the key, Supabase shows one of two names depending on your project's age — copy whichever one you see:
+            <ul style="margin-top:4px;padding-left:18px">
+              <li><strong>"anon public"</strong> (older projects — looks like <code>eyJ...</code>)</li>
+              <li><strong>"Publishable key"</strong> (newer projects — looks like <code>sb_publishable_...</code>)</li>
+            </ul>
+          </li>
         </ol>
+        <div class="alert alert-amber mt-2" style="font-size:11px">
+          ⚠️ Never copy the <strong>"service_role"</strong> or <strong>"Secret key"</strong> — those grant full admin access and must never be used in a browser app. Always use the public/anon/publishable one.
+        </div>
       </div>
 
       <div style="background:var(--surface2);border-radius:8px;padding:14px;margin-bottom:14px">
@@ -3372,7 +3417,7 @@ CREATE POLICY "allow_all" ON crm_invoices  FOR ALL USING (true) WITH CHECK (true
         </div>
         <div class="form-group">
           <label>Supabase Anon/Public Key</label>
-          <input id="s-sb-key" placeholder="eyJhbGci…" value="${escH(getSupabaseAnon())}" style="font-family:var(--mono);font-size:12px"/>
+          <input id="s-sb-key" placeholder="eyJhbGci… or sb_publishable_…" value="${escH(getSupabaseAnon())}" style="font-family:var(--mono);font-size:12px"/>
           <p style="font-size:11px;color:var(--text3);margin-top:3px">This is the safe public key (Settings → API → "anon public"), not the secret service_role key.</p>
         </div>
         <div id="cloud-connect-result" style="margin-bottom:10px"></div>
