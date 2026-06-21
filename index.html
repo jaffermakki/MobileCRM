@@ -178,6 +178,112 @@ tr:hover td{background:rgba(255,255,255,.025)}
 .gap-2{gap:8px}
 .gap-3{gap:12px}
 .w-full{width:100%}
+/* ── Mobile responsive ─────────────────────────────────────
+   Breakpoint: anything under 768px wide is treated as mobile.
+   The sidebar collapses to a slide-in drawer, the POS stacks
+   vertically, and grids switch to single-column. ─────────── */
+@media (max-width: 768px){
+
+  /* Sidebar becomes a full-height slide-in overlay */
+  #sidebar{
+    position:fixed; top:0; left:0; bottom:0; z-index:500;
+    transform:translateX(-100%);
+    transition:transform .25s cubic-bezier(.4,0,.2,1);
+    width:260px;
+    box-shadow:4px 0 24px rgba(0,0,0,.35);
+  }
+  #sidebar.mobile-open{ transform:translateX(0); }
+
+  /* Sidebar overlay backdrop */
+  #sidebar-backdrop{
+    display:none; position:fixed; inset:0; z-index:499;
+    background:rgba(0,0,0,.45); backdrop-filter:blur(2px);
+  }
+  #sidebar-backdrop.visible{ display:block; }
+
+  /* Main takes full width */
+  #main{ width:100%; overflow:hidden; }
+
+  /* Topbar: hamburger left, title centre, actions right */
+  .topbar{
+    padding:12px 14px;
+    display:grid;
+    grid-template-columns:44px 1fr auto;
+    align-items:center;
+    gap:8px;
+  }
+  .topbar h2{ font-size:15px; }
+  .topbar p{ display:none; } /* hide subtitle on mobile */
+  #topbar-search-wrap{ display:none; } /* hide search bar in topbar on mobile */
+
+  /* Page padding tighter on mobile */
+  .page{ padding:14px 12px; }
+
+  /* Stats grid: 2 columns on mobile */
+  .stats-grid{ grid-template-columns:1fr 1fr; gap:10px; }
+  .stat-value{ font-size:22px; }
+
+  /* Form rows stack on mobile */
+  .form-row, .form-row3{ grid-template-columns:1fr; }
+
+  /* POS: stack cart on top, payment panel below */
+  .pos-layout{
+    grid-template-columns:1fr;
+    grid-template-rows:auto auto;
+    height:auto;
+  }
+  .pos-right{ order:-1; } /* payment/customer panel comes first */
+
+  /* Tables: horizontal scroll */
+  .table-wrap{ overflow-x:auto; -webkit-overflow-scrolling:touch; }
+  table{ min-width:480px; }
+  th, td{ padding:9px 10px; font-size:12px; }
+
+  /* Cards tighter padding */
+  .card{ padding:14px; }
+
+  /* Buttons full-width where it makes sense */
+  .btn.w-full{ width:100%; }
+
+  /* Modal takes full screen on mobile */
+  .modal-overlay{ padding:0; align-items:flex-end; }
+  .modal{
+    max-width:100%; width:100%; max-height:92vh;
+    border-radius:16px 16px 0 0;
+  }
+
+  /* Quick actions: 2×2 grid */
+  .quick-actions-grid{ grid-template-columns:1fr 1fr !important; }
+
+  /* Bigger tap targets for nav items */
+  .nav-item{ padding:12px 14px; font-size:14px; }
+
+  /* Cloud banner smaller text */
+  #cloud-banner{ font-size:10px; max-width:200px; }
+}
+
+/* Extra small phones (iPhone SE etc.) */
+@media (max-width: 380px){
+  .stats-grid{ grid-template-columns:1fr; }
+  .pos-layout .scan-bar input{ font-size:12px; }
+}
+
+/* Hamburger button — only shown on mobile */
+#mobile-menu-btn{
+  display:none;
+  background:none; border:none; cursor:pointer;
+  padding:6px; border-radius:8px; color:var(--text);
+  align-items:center; justify-content:center;
+  transition:background .15s;
+}
+#mobile-menu-btn:active{ background:var(--surface2); }
+@media (max-width:768px){ #mobile-menu-btn{ display:flex; } }
+
+/* Hide topbar search input on mobile — use page-level search instead */
+@media (max-width:768px){
+  .topbar > div[style*="max-width:360px"]{ display:none !important; }
+}
+
 /* Print invoice */
 @media print{
   body *{visibility:hidden}
@@ -190,6 +296,8 @@ tr:hover td{background:rgba(255,255,255,.025)}
 </head>
 <body>
 <div id="app">
+  <!-- Mobile sidebar backdrop (tap to close) -->
+  <div id="sidebar-backdrop" onclick="closeMobileSidebar()"></div>
   <!-- SIDEBAR -->
   <div id="sidebar">
     <div class="sidebar-logo">
@@ -269,6 +377,12 @@ tr:hover td{background:rgba(255,255,255,.025)}
   <!-- MAIN -->
   <div id="main">
     <div class="topbar">
+      <!-- Hamburger: only visible on mobile (<768px) -->
+      <button id="mobile-menu-btn" onclick="openMobileSidebar()" aria-label="Open menu">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+          <line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/>
+        </svg>
+      </button>
       <div>
         <h2 id="page-title">Dashboard</h2>
         <p id="page-sub">Welcome back — here's today's overview</p>
@@ -1065,7 +1179,21 @@ const PAGE_ACTIONS = {
   customers:`<button class="btn btn-primary btn-sm" onclick="openAddCustomer()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add Customer</button>`,
 };
 
+// ── Mobile sidebar ─────────────────────────────────────────
+function openMobileSidebar(){
+  document.getElementById('sidebar').classList.add('mobile-open');
+  document.getElementById('sidebar-backdrop').classList.add('visible');
+  document.body.style.overflow='hidden';
+}
+function closeMobileSidebar(){
+  document.getElementById('sidebar').classList.remove('mobile-open');
+  document.getElementById('sidebar-backdrop').classList.remove('visible');
+  document.body.style.overflow='';
+}
+
 function showPage(p){
+  // Close mobile sidebar when navigating
+  closeMobileSidebar();
   currentPage=p;
   document.querySelectorAll('.nav-item').forEach(el=>el.classList.remove('active'));
   const nav=document.getElementById('nav-'+p);
@@ -1183,7 +1311,7 @@ function renderDashboard(c){
 
   <div class="card mt-3">
     <div class="card-title">Quick Actions</div>
-    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px">
+    <div class="quick-actions-grid" style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px">
       <button class="btn btn-secondary" style="padding:14px;flex-direction:column;gap:6px;height:auto" onclick="showPage('pos')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:18px;height:18px"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg>
         New Sale
