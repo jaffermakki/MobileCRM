@@ -273,15 +273,15 @@ tr:hover td{background:rgba(255,255,255,.025)}
         <h2 id="page-title">Dashboard</h2>
         <p id="page-sub">Welcome back — here's today's overview</p>
       </div>
-      <!-- Global instant customer search -->
-      <div style="position:relative;flex:1;max-width:300px;margin:0 24px">
+      <!-- Unified search — customers, repairs, invoices, products -->
+      <div style="position:relative;flex:1;max-width:360px;margin:0 24px">
         <svg style="position:absolute;left:10px;top:50%;transform:translateY(-50%);width:14px;height:14px;color:var(--text3)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-        <input id="global-cust-search" placeholder="Quick search customer (name or phone)…"
+        <input id="global-cust-search" placeholder="Search customers, repairs, invoices, products…"
           style="padding-left:32px;background:var(--surface2);border-color:var(--border2);font-size:12px"
-          oninput="globalCustomerSearch(this.value)"
-          onblur="setTimeout(()=>document.getElementById('global-search-results').innerHTML='',200)"
+          oninput="globalUnifiedSearch(this.value)"
+          onblur="setTimeout(()=>document.getElementById('global-search-results').innerHTML='',220)"
           autocomplete="off"/>
-        <div id="global-search-results" style="position:absolute;top:calc(100% + 4px);left:0;right:0;background:var(--surface);border:1px solid var(--border2);border-radius:10px;box-shadow:0 8px 32px rgba(0,0,0,.4);z-index:200;max-height:280px;overflow-y:auto"></div>
+        <div id="global-search-results" style="position:absolute;top:calc(100% + 4px);left:0;right:0;background:var(--surface);border:1px solid var(--border2);border-radius:10px;box-shadow:0 8px 32px rgba(0,0,0,.15);z-index:200;max-height:360px;overflow-y:auto"></div>
       </div>
       <div class="topbar-actions" id="topbar-actions"></div>
     </div>
@@ -500,18 +500,24 @@ function subscribeRealtime(){
 // ── Full sync: cloud → local ───────────────────────────────
 async function syncFromCloud(){
   try {
-    const [sets, prods, custs, reps, invs] = await Promise.all([
+    const [sets, prods, custs, reps, invs, stf, sessions, log] = await Promise.all([
       cloudGet('crm_settings','__settings__'),
       cloudGetAll('crm_products'),
       cloudGetAll('crm_customers'),
       cloudGetAll('crm_repairs'),
       cloudGetAll('crm_invoices'),
+      cloudGetAll('crm_staff'),
+      cloudGetAll('crm_cashsessions'),
+      cloudGetAll('crm_auditlog'),
     ]);
     if(sets){ Object.assign(settings, sets); DB.set('settings', settings); }
     if(prods && prods.length){ products=prods; DB.set('products',products); }
     if(custs && custs.length){ customers=custs; DB.set('customers',customers); }
     if(reps  && reps.length) { repairs=reps;   DB.set('repairs',repairs); }
     if(invs  && invs.length) { invoices=invs;  DB.set('invoices',invoices); }
+    if(stf   && stf.length)  { staff=stf;      DB.set('staff',staff); }
+    if(sessions && sessions.length){ cashSessions=sessions; DB.set('cashSessions',cashSessions); }
+    if(log   && log.length)  { auditLog=log;   DB.set('auditLog',auditLog); }
     updateBadges();
   } catch(e){ console.warn('Sync error:', e); }
 }
@@ -521,11 +527,15 @@ function save(key, val){
   DB.set(key, val);
   if(!cloudMode) return;
   const tableMap = {
-    settings:  async ()=>{ await cloudSet('crm_settings','__settings__', val); },
-    products:  async ()=>{ await cloudSetAll('crm_products', val); },
-    customers: async ()=>{ await cloudSetAll('crm_customers', val); },
-    repairs:   async ()=>{ await cloudSetAll('crm_repairs', val); },
-    invoices:  async ()=>{ await cloudSetAll('crm_invoices', val); },
+    settings:      async ()=>{ await cloudSet('crm_settings','__settings__', val); },
+    products:      async ()=>{ await cloudSetAll('crm_products', val); },
+    customers:     async ()=>{ await cloudSetAll('crm_customers', val); },
+    repairs:       async ()=>{ await cloudSetAll('crm_repairs', val); },
+    invoices:      async ()=>{ await cloudSetAll('crm_invoices', val); },
+    staff:         async ()=>{ await cloudSetAll('crm_staff', val); },
+    cashSessions:  async ()=>{ await cloudSetAll('crm_cashsessions', val); },
+    auditLog:      async ()=>{ await cloudSetAll('crm_auditlog', val); },
+    heldCarts:     async ()=>{ await cloudSetAll('crm_heldcarts', val); },
   };
   if(tableMap[key]) tableMap[key]().catch(e=>console.warn('Cloud save error:',e));
 }
@@ -1039,12 +1049,19 @@ const PAGE_TITLES = {
   inventory:['Inventory','Manage products and stock levels'],
   customers:['Customers','Customer profiles, history and loyalty'],
   reports:['Reports & Analytics','Sales, profit and stock insights'],
+  cashup:['End-of-Day Cash-Up','Count drawer, reconcile float, close the day'],
+  refunds:['Refunds & Returns','Process returns and issue store credit'],
+  staff:['Staff Management','PINs, roles and access control'],
+  audit:['Audit Log','Complete record of all system changes'],
   settings:['Settings','Configure shop details and preferences'],
 };
 const PAGE_ACTIONS = {
   pos:'',
   repairs:`<button class="btn btn-primary btn-sm" onclick="openNewRepair()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>New Ticket</button>`,
-  inventory:`<button class="btn btn-primary btn-sm" onclick="openAddProduct()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add Product</button>`,
+  inventory:`<div style="display:flex;gap:8px">
+    <button class="btn btn-secondary btn-sm" onclick="openIgenImport()" title="Import products from iGen Mobility">📦 iGen Import</button>
+    <button class="btn btn-primary btn-sm" onclick="openAddProduct()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add Product</button>
+  </div>`,
   customers:`<button class="btn btn-primary btn-sm" onclick="openAddCustomer()"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>Add Customer</button>`,
 };
 
@@ -1098,6 +1115,10 @@ function renderDashboard(c){
   const openRepairs=repairs.filter(r=>!['COMPLETED','COLLECTED'].includes(r.status)).length;
   const readyPickup=repairs.filter(r=>r.status==='READY').length;
   const lowStock=products.filter(p=>p.stock<=p.threshold);
+  const overdueRepairs=repairs.filter(r=>
+    r.promisedBy && r.promisedBy < todayStr &&
+    !['COMPLETED','COLLECTED'].includes(r.status)
+  );
 
   // Last 7 days sales
   const last7=[];
@@ -1186,6 +1207,13 @@ function renderDashboard(c){
   <div class="alert alert-green mt-3">
     ✅ <strong>${readyPickup} device${readyPickup!==1?'s':''}</strong> ready for customer pickup — 
     <a href="#" onclick="showPage('repairs');return false" style="color:var(--green)">View tickets</a>
+  </div>`:''}
+
+  ${overdueRepairs.length?`
+  <div class="alert alert-red mt-3">
+    🚨 <strong>${overdueRepairs.length} overdue repair${overdueRepairs.length!==1?'s':''}</strong> past promised date — 
+    ${overdueRepairs.slice(0,3).map(r=>`<strong>#${r.ticketNo}</strong> (${escH(r.customerName)}, ${r.promisedBy})`).join(', ')}${overdueRepairs.length>3?'…':''} 
+    <a href="#" onclick="showPage('repairs');return false" style="color:var(--red)"> View all</a>
   </div>`:''}
 
   ${lowStock.length?`
@@ -1678,20 +1706,99 @@ function showSaleCompleteBanner(invNumber, total){
   if(el) el.remove();
   el=document.createElement('div');
   el.id='sale-complete-banner';
-  el.style.cssText='position:fixed;top:16px;right:16px;z-index:999;min-width:300px;background:var(--green-bg);border:1px solid rgba(34,197,94,.4);border-radius:10px;padding:14px 16px;box-shadow:0 8px 24px rgba(0,0,0,.4)';
+  el.style.cssText='position:fixed;top:16px;right:16px;z-index:999;min-width:300px;background:var(--green-bg);border:1px solid rgba(62,207,110,.4);border-radius:10px;padding:14px 16px;box-shadow:0 8px 24px rgba(0,0,0,.2)';
   el.innerHTML=`
     <div style="color:var(--green);font-weight:700;font-size:13px;margin-bottom:8px">✅ Sale complete! Invoice ${escH(invNumber)} — ${fmt(total)}</div>
-    <div style="display:flex;gap:8px">
-      <button class="btn btn-primary btn-sm" onclick="reprintLastInvoice()">🖨️ Print Invoice</button>
+    <div style="display:flex;gap:8px;flex-wrap:wrap">
+      <button class="btn btn-primary btn-sm" onclick="reprintLastInvoice()">🖨️ A4 Invoice</button>
+      <button class="btn btn-secondary btn-sm" onclick="printThermalReceipt(window._lastInvoice)">🧾 Thermal Receipt</button>
       <button class="btn btn-secondary btn-sm" onclick="document.getElementById('sale-complete-banner').remove()">Dismiss</button>
     </div>`;
   document.body.appendChild(el);
-  setTimeout(()=>{ if(el.parentNode) el.parentNode.removeChild(el); },15000);
+  setTimeout(()=>{ if(el.parentNode) el.parentNode.removeChild(el); },18000);
 }
 
 function reprintLastInvoice(){
   if(!window._lastInvoice){ alert('No recent invoice to print.'); return; }
   printInvoice(window._lastInvoice);
+}
+
+/**
+ * Prints an 80mm thermal receipt — the narrow format used by POS receipt
+ * printers. Much faster than the A4 invoice for quick in-store transactions.
+ * Works by injecting a compact print-only stylesheet into a hidden div and
+ * calling window.print(), same mechanism as the A4 invoice but different layout.
+ */
+function printThermalReceipt(inv){
+  if(!inv){ alert('No invoice to print'); return; }
+  const area=document.getElementById('print-area');
+  const prov=CA_PROVINCES[inv.province||settings.province||'ON'];
+
+  // Inject thermal stylesheet once
+  if(!document.getElementById('thermal-print-style')){
+    const s=document.createElement('style');
+    s.id='thermal-print-style';
+    s.textContent=`
+    @media print {
+      body > *:not(#print-area){ display:none !important }
+    }
+    #print-area .thm { font-family:monospace; font-size:11px; width:280px; margin:0 auto; padding:8px 4px; color:#000; background:#fff; line-height:1.5 }
+    #print-area .thm .t-center { text-align:center }
+    #print-area .thm .t-right  { text-align:right }
+    #print-area .thm .t-bold   { font-weight:bold }
+    #print-area .thm .t-lg     { font-size:15px; font-weight:bold }
+    #print-area .thm .t-sm     { font-size:10px }
+    #print-area .thm .t-div    { border-top:1px dashed #000; margin:5px 0 }
+    #print-area .thm .t-row    { display:flex; justify-content:space-between }
+    #print-area .thm .t-item   { display:flex; justify-content:space-between; margin:2px 0 }
+    #print-area .thm .t-name   { flex:1; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding-right:4px }
+    #print-area .thm .t-amt    { flex-shrink:0; text-align:right; white-space:nowrap }
+    #print-area .thm .t-total  { font-size:14px; font-weight:bold; display:flex; justify-content:space-between; margin:4px 0 }
+    `;
+    document.head.appendChild(s);
+  }
+
+  const fmtLine=(name,amount)=>
+    `<div class="t-item"><span class="t-name">${escH(name)}</span><span class="t-amt">${amount}</span></div>`;
+
+  area.innerHTML=`<div class="thm">
+    <div class="t-center t-bold" style="font-size:14px">${escH(settings.shopName)}</div>
+    <div class="t-center t-sm">${escH(settings.shopAddress||'')}</div>
+    ${settings.shopPhone?`<div class="t-center t-sm">${escH(settings.shopPhone)}</div>`:''}
+    <div class="t-div"></div>
+    <div class="t-row t-sm"><span>${escH(inv.number)}</span><span>${inv.date}</span></div>
+    ${inv.customerName&&inv.customerName!=='Walk-in'?`<div class="t-sm">Customer: ${escH(inv.customerName)}</div>`:''}
+    <div class="t-div"></div>
+    ${inv.lines.map(l=>`
+      <div style="margin:3px 0">
+        <div class="t-bold t-sm">${escH(l.name)}</div>
+        ${fmtLine(`  ${l.qty} x ${fmt(l.price)}`, fmt(l.price*l.qty))}
+      </div>`).join('')}
+    <div class="t-div"></div>
+    ${fmtLine('Subtotal', fmt(inv.subtotal))}
+    ${inv.discount?fmtLine('Discount', '-'+fmt(inv.discount)):''}
+    ${(inv.taxLines||[]).map(t=>fmtLine(t.label, fmt(t.amount))).join('')}
+    <div class="t-div"></div>
+    <div class="t-total"><span>TOTAL</span><span>${fmt(inv.total)}</span></div>
+    <div class="t-div"></div>
+    ${fmtLine('Payment: '+escH(inv.payment), '')}
+    ${inv.tendered?fmtLine('Tendered', fmt(inv.tendered)):''}
+    ${inv.change?fmtLine('Change', fmt(inv.change)):''}
+    ${settings.shopGST?`<div class="t-div"></div><div class="t-sm t-center">GST/HST# ${escH(settings.shopGST)}</div>`:''}
+    <div class="t-div"></div>
+    <div class="t-center t-sm">Thank you for choosing</div>
+    <div class="t-center t-bold">${escH(settings.shopName)}</div>
+    <div class="t-center t-sm" style="margin-top:4px">🌿 Consider a digital receipt</div>
+    <br/><br/>
+  </div>`;
+
+  area.style.display='block';
+  function cleanup(){ area.style.display='none'; window.removeEventListener('afterprint',cleanup); }
+  window.addEventListener('afterprint', cleanup);
+  requestAnimationFrame(()=>requestAnimationFrame(()=>{
+    window.print();
+    setTimeout(cleanup, 5000);
+  }));
 }
 
 function openProductPicker(){
@@ -2117,27 +2224,109 @@ function openNewRepair(){
     <label>Problem Description</label>
     <textarea id="nr-desc" placeholder="Describe the issue in detail…" rows="3"></textarea>
   </div>
+  <div class="form-group">
+    <label>📷 Device Photos (optional — taken at intake to document condition)</label>
+    <div style="border:2px dashed var(--border2);border-radius:8px;padding:12px;text-align:center;cursor:pointer;transition:border-color .15s" onclick="document.getElementById('nr-photos-input').click()" id="photo-drop-zone">
+      <div style="color:var(--text3);font-size:13px">Click to add photos from camera or files</div>
+      <input type="file" id="nr-photos-input" accept="image/*" multiple style="display:none" onchange="previewRepairPhotos(this)"/>
+    </div>
+    <div id="nr-photo-previews" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:8px"></div>
+  </div>
   <div class="form-row">
     <div class="form-group">
       <label>Estimated Cost (${settings.currency})</label>
-      <input id="nr-cost" type="number" placeholder="1500"/>
+      <input id="nr-cost" type="number" placeholder="150.00"/>
     </div>
+    <div class="form-group">
+      <label>Promised By (Ready Date)</label>
+      <input id="nr-promised" type="date" value="${new Date(Date.now()+2*86400000).toISOString().slice(0,10)}"/>
+    </div>
+  </div>
+  <div class="form-row">
     <div class="form-group">
       <label>Warranty (days)</label>
       <input id="nr-warranty" type="number" value="90"/>
     </div>
+    <div class="form-group">
+      <label>Assigned Technician</label>
+      <select id="nr-tech">
+        <option value="">Unassigned</option>
+        ${staff.filter(s=>s.active&&['owner','manager','technician'].includes(s.role)).map(s=>`<option value="${escH(s.id)}">${escH(s.name)}</option>`).join('')}
+      </select>
+    </div>
   </div>`;
   openModal('New Repair Ticket',html,`<button class="btn btn-secondary" onclick="closeModal()">Cancel</button><button class="btn btn-primary" onclick="saveNewRepair()">Create Ticket</button>`);
+}
+
+let _repairPhotos=[];
+
+function previewRepairPhotos(input){
+  const files=Array.from(input.files);
+  const container=document.getElementById('nr-photo-previews');
+  const zone=document.getElementById('photo-drop-zone');
+  if(zone) zone.style.borderColor='var(--accent)';
+
+  files.forEach(file=>{
+    if(file.size>2*1024*1024){ alert(`"${file.name}" is over 2MB — please use a smaller image`); return; }
+    const reader=new FileReader();
+    reader.onload=e=>{
+      const dataUrl=e.target.result;
+      _repairPhotos.push({name:file.name, data:dataUrl, addedAt:new Date().toISOString()});
+      if(container){
+        const idx=_repairPhotos.length-1;
+        const wrap=document.createElement('div');
+        wrap.style.cssText='position:relative;display:inline-block';
+        wrap.innerHTML=`
+          <img src="${dataUrl}" style="width:80px;height:80px;object-fit:cover;border-radius:8px;border:1px solid var(--border2)"/>
+          <button onclick="_repairPhotos.splice(${idx},1);this.parentElement.remove()" style="position:absolute;top:-6px;right:-6px;background:var(--red);color:#fff;border:none;border-radius:50%;width:18px;height:18px;font-size:11px;cursor:pointer;display:flex;align-items:center;justify-content:center">✕</button>`;
+        container.appendChild(wrap);
+      }
+    };
+    reader.readAsDataURL(file);
+  });
 }
 
 function lookupRepairCustomer(){
   const ph=document.getElementById('nr-phone')?.value?.trim();
   const found=customers.find(c=>c.phone===ph);
   const info=document.getElementById('nr-cust-info');
-  if(found && info){
+  if(!info) return;
+
+  if(found){
     document.getElementById('nr-name').value=found.name;
-    info.innerHTML=`<div class="alert alert-green" style="font-size:12px;margin-bottom:10px">✓ Existing customer: <strong>${escH(found.name)}</strong> · ${found.points} loyalty points</div>`;
-  } else if(info) info.innerHTML='';
+
+    // Check for repairs still under warranty for this customer
+    const warrantyAlerts=repairs.filter(r=>{
+      if(r.customerId!==found.id) return false;
+      if(!['COMPLETED','COLLECTED'].includes(r.status)) return false;
+      const completedEntry=r.statusHistory?.slice().reverse().find(h=>h.status==='COMPLETED');
+      if(!completedEntry) return false;
+      const completedDate=new Date(completedEntry.date);
+      const warrantyExpiry=new Date(completedDate.getTime()+(r.warrantyDays||90)*86400000);
+      return warrantyExpiry>new Date();
+    });
+
+    let html=`<div class="alert alert-green" style="font-size:12px;margin-bottom:10px">✓ Existing customer: <strong>${escH(found.name)}</strong> · ${found.points} loyalty points</div>`;
+
+    if(warrantyAlerts.length){
+      html+=`<div class="alert alert-amber" style="font-size:12px;margin-bottom:10px">
+        ⚠️ <strong>Active warranty on ${warrantyAlerts.length} previous repair${warrantyAlerts.length!==1?'s':''}:</strong><br/>
+        ${warrantyAlerts.map(r=>{
+          const completedEntry=r.statusHistory?.slice().reverse().find(h=>h.status==='COMPLETED');
+          const completedDate=completedEntry?new Date(completedEntry.date):null;
+          const expiryDate=completedDate?new Date(completedDate.getTime()+(r.warrantyDays||90)*86400000):null;
+          const daysLeft=expiryDate?Math.ceil((expiryDate-new Date())/86400000):0;
+          return `• Ticket #${r.ticketNo}: <strong>${escH(r.device)}</strong> — ${escH(r.issue||'')} 
+            (${daysLeft} day${daysLeft!==1?'s':''} warranty remaining, expires ${expiryDate?expiryDate.toLocaleDateString('en-CA'):''})`;
+        }).join('<br/>')}
+        <br/><span style="color:var(--amber);font-weight:700">Confirm with customer if this is a warranty return before creating a new ticket.</span>
+      </div>`;
+    }
+
+    info.innerHTML=html;
+  } else {
+    info.innerHTML='';
+  }
 }
 
 function saveNewRepair(){
@@ -2163,9 +2352,13 @@ function saveNewRepair(){
     estimatedCost:parseFloat(document.getElementById('nr-cost')?.value)||null,
     finalCost:null, approvedCost:null,
     warrantyDays:parseInt(document.getElementById('nr-warranty')?.value)||90,
+    promisedBy:document.getElementById('nr-promised')?.value||'',
+    technicianId:document.getElementById('nr-tech')?.value||'',
     statusHistory:[{status:'RECEIVED',note:'Ticket created',date:new Date().toISOString()}],
-    parts:[], createdAt:today(), updatedAt:today()
+    parts:[], photos:[..._repairPhotos],
+    createdAt:today(), updatedAt:today()
   };
+  _repairPhotos=[];
   repairs.push(r);
   save('repairs',repairs);
   closeModal();
@@ -2188,9 +2381,22 @@ function openRepairDetail(id){
   <div class="form-row3" style="margin-bottom:16px">
     <div><p style="font-size:11px;color:var(--text2)">Customer</p><p class="font-bold">${escH(r.customerName)}</p><p style="font-size:11px;color:var(--text3)">${escH(r.phone)}</p></div>
     <div><p style="font-size:11px;color:var(--text2)">Device</p><p class="font-bold">${escH(r.device)}</p></div>
-    <div><p style="font-size:11px;color:var(--text2)">Issue</p><p class="font-bold">${escH(r.issue)}</p></div>
+    <div><p style="font-size:11px;color:var(--text2)">Issue</p><p class="font-bold">${escH(r.issue)}</p>
+      ${r.promisedBy?`<p style="font-size:11px;color:${r.promisedBy<today()&&!['COMPLETED','COLLECTED'].includes(r.status)?'var(--red)':'var(--text3)'}">📅 Due: ${fmtDate(r.promisedBy)}${r.promisedBy<today()&&!['COMPLETED','COLLECTED'].includes(r.status)?' ⚠️ OVERDUE':''}</p>`:''}
+    </div>
   </div>
   ${r.description?`<div style="background:var(--surface2);border-radius:8px;padding:10px 12px;font-size:13px;color:var(--text2);margin-bottom:14px">${escH(r.description)}</div>`:''}
+  <!-- Intake Photos -->
+  ${(r.photos&&r.photos.length)?`
+  <div style="margin-bottom:14px">
+    <p style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">📷 Intake Photos (${r.photos.length})</p>
+    <div style="display:flex;flex-wrap:wrap;gap:8px">
+      ${r.photos.map((ph,i)=>`
+        <a href="${ph.data}" target="_blank" title="${escH(ph.name)}">
+          <img src="${ph.data}" style="width:90px;height:90px;object-fit:cover;border-radius:8px;border:2px solid var(--border2);cursor:zoom-in;transition:border-color .15s" onmouseover="this.style.borderColor='var(--accent)'" onmouseout="this.style.borderColor='var(--border2)'"/>
+        </a>`).join('')}
+    </div>
+  </div>`:''}
   <!-- Costs -->
   <div class="form-row3" style="margin-bottom:14px">
     <div class="form-group" style="margin:0">
@@ -2364,6 +2570,195 @@ function updateSubcatDropdown(selectId, cat, currentVal){
   if(!sel) return;
   const opts=CAT_SUBCATEGORIES[cat]||['Generic'];
   sel.innerHTML=opts.map(s=>`<option value="${s}" ${s===currentVal?'selected':''}>${s}</option>`).join('');
+}
+
+// ══════════════════════════════════════════════════════════
+// IGEN MOBILITY PRODUCT IMPORT
+// ══════════════════════════════════════════════════════════
+function openIgenImport(){
+  const html=`
+  <div style="font-size:13px;color:var(--text2);margin-bottom:14px">
+    Paste iGen Mobility product lines below — one per line. Copy SKUs and product names directly from your iGen order confirmation, invoice, or their product pages at <a href="https://igenmobility.com" target="_blank" style="color:var(--accent)">igenmobility.com</a>.
+  </div>
+  <div style="background:var(--surface2);border-radius:8px;padding:10px;margin-bottom:12px;font-size:11px;color:var(--text3);line-height:1.8">
+    <strong style="color:var(--accent)">Accepted formats (one product per line):</strong><br/>
+    <code>FLGMG-IP15-PNK · Floral Glitter MagSafe Pink — iPhone 15</code><br/>
+    <code>DMS-IP17PM-GRY</code> (SKU only — name auto-derived)<br/>
+    <code>TABC-11INC-BLK · Universal Tablet Case Black 11 Inch</code><br/>
+    <code>CHG-USBC-20W · 20W USB-C Fast Charger</code>
+  </div>
+  <textarea id="igen-paste" rows="9" placeholder="Paste your iGen product list here…" style="font-family:var(--mono);font-size:12px;letter-spacing:.3px"></textarea>
+  <div class="form-row mt-2">
+    <div class="form-group">
+      <label>Default Cost Price ($ CAD)</label>
+      <input id="igen-cost" type="number" step="0.01" value="5.00"/>
+    </div>
+    <div class="form-group">
+      <label>Default Retail Price ($ CAD)</label>
+      <input id="igen-price" type="number" step="0.01" value="14.99"/>
+    </div>
+  </div>
+  <div class="form-row">
+    <div class="form-group">
+      <label>Opening Stock Quantity</label>
+      <input id="igen-stock" type="number" value="10"/>
+    </div>
+    <div class="form-group">
+      <label>Low-Stock Alert Threshold</label>
+      <input id="igen-threshold" type="number" value="3"/>
+    </div>
+  </div>
+  <div id="igen-preview" style="margin-top:12px"></div>`;
+
+  openModal('📦 Import from iGen Mobility', html,
+    `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+     <button class="btn btn-secondary" onclick="previewIgenImport()">👁 Preview</button>
+     <button class="btn btn-primary" onclick="confirmIgenImport()">✅ Import All</button>`, true);
+}
+
+function parseIgenLines(raw){
+  const lines = raw.split('\n').map(l=>l.trim()).filter(l=>l.length>2);
+  return lines.map(line=>{
+    const parts = line.split(/[·\t]/).map(p=>p.trim());
+    const sku = parts[0].toUpperCase().replace(/\s+/g,'');
+    const rawName = parts[1]||'';
+
+    // ── Category detection ────────────────────────────────
+    let category='CASE';
+    if(/^(CHG|WALL|CAR-CHG|COMBO)/i.test(sku)||/charger/i.test(rawName))  category='CHARGER';
+    else if(/^(CBL|USB-C|LIGHT|MICRO|HDMI|AUX)/i.test(sku)||/cable/i.test(rawName)) category='CABLE';
+    else if(/^(SCR|LCD|DISP)/i.test(sku)||/screen|lcd|display/i.test(rawName))      category='SCREEN';
+    else if(/^(BAT|BATT)/i.test(sku)||/battery/i.test(rawName))                     category='BATTERY';
+    else if(/^(TG|PRIV|MATT|POLY|GLASS)/i.test(sku)||/tempered|glass|protector/i.test(rawName)) category='ACCESSORY';
+    else if(/^(PWR|POWER|BANK)/i.test(sku)||/power bank/i.test(rawName))            category='ACCESSORY';
+    else if(/^(TAB|IPAD)/i.test(sku)||/tablet/i.test(rawName))                      category='ACCESSORY';
+    else if(/^(REPR|TOOL|BKGLS|BATT)/i.test(sku)||/tool|repair|back glass/i.test(rawName)) category='PART';
+
+    // ── Color from last SKU segment ───────────────────────
+    const segs = sku.split('-');
+    const colorMap={BLK:'Black',WHT:'White',RED:'Red',BLU:'Blue',PNK:'Pink',
+      GRY:'Grey',GRN:'Green',PRP:'Purple',RGLD:'Rose Gold',
+      GLD:'Gold',CLR:'Clear',TL:'Teal',NVY:'Navy',
+      MINT:'Mint',YLW:'Yellow',ORG:'Orange',SMK:'Smoke'};
+    const lastSeg = segs[segs.length-1];
+    const color = colorMap[lastSeg]||lastSeg;
+
+    // ── Phone model from SKU ──────────────────────────────
+    const modelMap={
+      'IP17PM':'iPhone 17 Pro Max','IP17P':'iPhone 17 Pro',
+      'IP17A':'iPhone 17 Air','IP17':'iPhone 17',
+      'IP16PM':'iPhone 16 Pro Max','IP16P':'iPhone 16 Pro',
+      'IP16PL':'iPhone 16 Plus','IP16':'iPhone 16','IP16E':'iPhone 16e',
+      'IP15PM':'iPhone 15 Pro Max','IP15P':'iPhone 15 Pro',
+      'IP15PL':'iPhone 15 Plus','IP15':'iPhone 15',
+      'IP14PM':'iPhone 14 Pro Max','IP14P':'iPhone 14 Pro',
+      'IP14PL':'iPhone 14 Plus','IP14':'iPhone 14',
+      'IP13PM':'iPhone 13 Pro Max','IP13P':'iPhone 13 Pro',
+      'IP13M':'iPhone 13 Mini','IP13':'iPhone 13',
+      'IP12PM':'iPhone 12 Pro Max','IP12P':'iPhone 12 Pro',
+      'IP12M':'iPhone 12 Mini','IP12':'iPhone 12',
+      'IP11PM':'iPhone 11 Pro Max','IP11P':'iPhone 11 Pro','IP11':'iPhone 11',
+      'IPXM':'iPhone XS Max','IPXR':'iPhone XR','IPX':'iPhone X/XS',
+      'IP8PL':'iPhone 8 Plus','IP7PL':'iPhone 7 Plus','IPSE':'iPhone SE',
+      'S26U':'Galaxy S26 Ultra','S26P':'Galaxy S26 Plus','S26':'Galaxy S26',
+      'S25U':'Galaxy S25 Ultra','S25P':'Galaxy S25 Plus','S25':'Galaxy S25',
+      'S24U':'Galaxy S24 Ultra','S24P':'Galaxy S24 Plus','S24':'Galaxy S24',
+      'S23U':'Galaxy S23 Ultra','S23P':'Galaxy S23 Plus','S23':'Galaxy S23',
+      'S22U':'Galaxy S22 Ultra','S22P':'Galaxy S22 Plus','S22':'Galaxy S22',
+      'A57':'Galaxy A57','A55':'Galaxy A55','A54':'Galaxy A54 5G',
+      'A53':'Galaxy A53 5G','A37':'Galaxy A37','A36':'Galaxy A36',
+      'A35':'Galaxy A35','A26':'Galaxy A26','A25':'Galaxy A25 5G',
+      'A16':'Galaxy A16 5G','A15':'Galaxy A15 5G','A14':'Galaxy A14 5G',
+      '11INC':'11 Inch','10INC':'10 Inch','8INC':'8 Inch',
+    };
+    let model='';
+    for(const [k,v] of Object.entries(modelMap)){
+      if(sku.includes(k)){ model=v; break; }
+    }
+
+    // ── Build product name ────────────────────────────────
+    let name='';
+    if(rawName){
+      name=rawName.replace(/^[-–·]+|[-–·]+$/g,'').trim();
+      if(color&&!colorMap[lastSeg]===false&&!name.toLowerCase().includes(color.toLowerCase())) name+=` — ${color}`;
+    } else {
+      const typeMap={
+        'FLGMG':'Floral Glitter MagSafe','DMS':'Defend MagSafe',
+        'TABC':'Tablet Case','CHG':'Fast Charger',
+        'CBL':'Cable','TG':'Tempered Glass','BAT':'Battery',
+        'PWR':'Power Bank','HOLDR':'Phone Holder','EARBUD':'Wireless Earbuds',
+      };
+      let type='Case';
+      for(const [k,v] of Object.entries(typeMap)){
+        if(sku.startsWith(k)){ type=v; break; }
+      }
+      name=[type,model,color].filter(Boolean).join(' — ');
+    }
+
+    return {sku, name:name||sku, category, subcategory:'iGen Mobility'};
+  }).filter(p=>p.sku.length>2);
+}
+
+function previewIgenImport(){
+  const raw=document.getElementById('igen-paste')?.value||'';
+  const parsed=parseIgenLines(raw);
+  const el=document.getElementById('igen-preview');
+  if(!el) return;
+  if(!parsed.length){
+    el.innerHTML='<div class="alert alert-red">No valid lines found. Paste SKUs like: <code>FLGMG-IP15-PNK</code> or <code>FLGMG-IP15-PNK · Product Name</code></div>';
+    return;
+  }
+  const dupes=parsed.filter(p=>products.find(x=>x.sku===p.sku));
+  const newCount=parsed.length-dupes.length;
+  el.innerHTML=`
+  <div class="alert alert-${dupes.length&&!newCount?'amber':'green'}" style="margin-bottom:8px">
+    Parsed <strong>${parsed.length}</strong> lines · <strong>${newCount}</strong> new · <strong>${dupes.length}</strong> already in inventory (will skip)
+  </div>
+  <div style="max-height:200px;overflow-y:auto;border:1px solid var(--border);border-radius:8px">
+  <table style="font-size:11px">
+    <thead><tr><th>SKU</th><th>Name</th><th>Cat</th><th></th></tr></thead>
+    <tbody>
+    ${parsed.map(p=>{
+      const exists=products.find(x=>x.sku===p.sku);
+      return `<tr style="${exists?'opacity:.4':''}">
+        <td class="font-mono" style="font-size:10px">${escH(p.sku)}</td>
+        <td style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escH(p.name)}</td>
+        <td><span class="badge badge-blue">${p.category}</span></td>
+        <td>${exists?'<span class="text-amber font-bold">skip</span>':'<span class="text-green font-bold">new</span>'}</td>
+      </tr>`;
+    }).join('')}
+    </tbody>
+  </table></div>`;
+}
+
+function confirmIgenImport(){
+  const raw=document.getElementById('igen-paste')?.value||'';
+  const parsed=parseIgenLines(raw);
+  if(!parsed.length){ alert('No valid products to import'); return; }
+
+  const cost=parseFloat(document.getElementById('igen-cost')?.value)||5;
+  const price=parseFloat(document.getElementById('igen-price')?.value)||14.99;
+  const stock=parseInt(document.getElementById('igen-stock')?.value)||10;
+  const threshold=parseInt(document.getElementById('igen-threshold')?.value)||3;
+
+  let added=0, skipped=0;
+  parsed.forEach(p=>{
+    if(products.find(x=>x.sku===p.sku)){ skipped++; return; }
+    products.push({
+      id:uid(), sku:p.sku, name:p.name,
+      category:p.category, subcategory:p.subcategory,
+      shelf:'', cost, price, stock, threshold,
+      supplier:'iGen Mobility',
+      createdAt:new Date().toISOString()
+    });
+    added++;
+  });
+
+  save('products',products);
+  if(typeof addAudit==='function') addAudit('INVENTORY',`iGen Import: ${added} added, ${skipped} skipped`);
+  closeModal();
+  renderInventory(document.getElementById('page-content'));
+  showAlert('global-alert',`✅ iGen Import: ${added} product${added!==1?'s':''} added${skipped?`, ${skipped} duplicate${skipped!==1?'s':''} skipped`:''}`, 'green');
 }
 
 function openAddProduct(){
@@ -2582,6 +2977,12 @@ function openCustomerDetail(id){
     <span style="font-size:12px;color:var(--text2)">📞 ${escH(cu.phone)} ${cu.email?`· ✉️ ${escH(cu.email)}`:''}</span>
     <button class="btn btn-secondary btn-sm" onclick="closeModal();openIssueCreditModal('${cu.id}')">🏷️ Issue Credit</button>
   </div>
+  ${cu.notes?`
+  <div style="background:var(--amber-bg);border-left:3px solid var(--amber);border-radius:0 6px 6px 0;padding:8px 12px;margin:8px 0;font-size:12px;color:var(--text2)">
+    <span style="font-weight:700;color:var(--amber);text-transform:uppercase;letter-spacing:.5px;font-size:10px">Staff Notes · </span>${escH(cu.notes)}
+    <button class="btn btn-secondary btn-sm" style="margin-left:8px;padding:2px 8px" onclick="editCustomerNotes('${cu.id}')">Edit</button>
+  </div>`:`
+  <button class="btn btn-secondary btn-sm" style="margin:6px 0" onclick="editCustomerNotes('${cu.id}')">📝 Add Staff Note</button>`}
   <hr class="divider"/>
   <p style="font-size:12px;font-weight:700;color:var(--text2);margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px">Recent Invoices</p>
   ${custInvoices.length===0?'<p style="font-size:13px;color:var(--text3)">No purchases yet</p>':
@@ -2606,6 +3007,27 @@ function openCustomerDetail(id){
   </div>`).join('')}`;
 
   openModal(cu.name,html,'<button class="btn btn-secondary" onclick="closeModal()">Close</button>',true);
+}
+
+function editCustomerNotes(id){
+  const cu=customers.find(x=>x.id===id);
+  if(!cu) return;
+  const html=`
+  <p style="font-size:12px;color:var(--text2);margin-bottom:10px">Staff notes are only visible here — customers never see them. Use for anything useful: preferred contact method, difficult topics, device history, special pricing, etc.</p>
+  <textarea id="cust-notes-input" rows="5" placeholder="e.g. Prefers text over calls. Brought in water-damaged phone claiming it wasn't dropped. Give warranty carefully.">${escH(cu.notes||'')}</textarea>`;
+  openModal(`Notes — ${cu.name}`, html,
+    `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+     <button class="btn btn-primary" onclick="saveCustomerNotes('${id}')">Save Note</button>`);
+  setTimeout(()=>document.getElementById('cust-notes-input')?.focus(),100);
+}
+
+function saveCustomerNotes(id){
+  const cu=customers.find(x=>x.id===id);
+  if(!cu) return;
+  cu.notes=document.getElementById('cust-notes-input')?.value||'';
+  save('customers',customers);
+  closeModal();
+  openCustomerDetail(id);
 }
 
 function openIssueCreditModal(customerId){
@@ -2642,18 +3064,31 @@ function confirmIssueCredit(customerId){
 function renderReports(c){
   const now=new Date();
   const monthStart=new Date(now.getFullYear(),now.getMonth(),1).toISOString().slice(0,10);
+  const lastMonthStart=new Date(now.getFullYear(),now.getMonth()-1,1).toISOString().slice(0,10);
+  const lastMonthEnd=new Date(now.getFullYear(),now.getMonth(),0).toISOString().slice(0,10);
   const todayStr=today();
 
-  const thisMonth=invoices.filter(i=>i.date>=monthStart);
+  const thisMonth=invoices.filter(i=>i.date>=monthStart&&i.type!=='REFUND'&&i.type!=='STORE_CREDIT_ISSUED');
+  const lastMonth=invoices.filter(i=>i.date>=lastMonthStart&&i.date<=lastMonthEnd&&i.type!=='REFUND'&&i.type!=='STORE_CREDIT_ISSUED');
   const monthRevenue=thisMonth.reduce((s,i)=>s+i.total,0);
+  const lastMonthRevenue=lastMonth.reduce((s,i)=>s+i.total,0);
   const monthTax=thisMonth.reduce((s,i)=>s+(i.totalTax||i.tax||0),0);
   const monthProfit=invoices.reduce((s,inv)=>{
     return s+inv.lines.reduce((ls,l)=>{
       const p=products.find(x=>x.id===l.productId);
-      if(!p) return ls+(l.price*l.qty);// repair line — count as pure revenue
+      if(!p) return ls+(l.price*l.qty);
       return ls+(l.price-p.cost)*l.qty;
     },0);
   },0);
+
+  // Trend helper: returns HTML badge showing change vs last period
+  function trend(current, previous, prefix=''){
+    if(!previous) return '';
+    const pct=Math.round(((current-previous)/previous)*100);
+    const up=pct>=0;
+    const color=up?'var(--green)':'var(--red)';
+    return `<span style="font-size:11px;font-weight:700;color:${color};margin-left:6px">${up?'▲':'▼'} ${Math.abs(pct)}% vs last month</span>`;
+  }
 
   // By category
   const byCat={};
@@ -2679,10 +3114,26 @@ function renderReports(c){
 
   c.innerHTML=`
   <div class="stats-grid">
-    <div class="stat-card"><div class="stat-label">This Month Revenue</div><div class="stat-value text-green">${fmt(monthRevenue)}</div><div class="stat-sub">${thisMonth.length} invoices</div></div>
-    <div class="stat-card"><div class="stat-label">Tax Collected (This Month)</div><div class="stat-value text-amber">${fmt(monthTax)}</div><div class="stat-sub">${CA_PROVINCES[settings.province]?.label||'Canada'}</div></div>
-    <div class="stat-card"><div class="stat-label">All-time Gross Profit</div><div class="stat-value text-green">${fmt(monthProfit)}</div><div class="stat-sub">revenue minus product cost</div></div>
-    <div class="stat-card"><div class="stat-label">Total Invoices</div><div class="stat-value">${invoices.length}</div><div class="stat-sub">all time</div></div>
+    <div class="stat-card">
+      <div class="stat-label">This Month Revenue</div>
+      <div class="stat-value text-green">${fmt(monthRevenue)}</div>
+      <div class="stat-sub">${thisMonth.length} invoices ${trend(monthRevenue,lastMonthRevenue)}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Tax Collected (This Month)</div>
+      <div class="stat-value text-amber">${fmt(monthTax)}</div>
+      <div class="stat-sub">${CA_PROVINCES[settings.province]?.label||'Canada'}</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">All-time Gross Profit</div>
+      <div class="stat-value text-green">${fmt(monthProfit)}</div>
+      <div class="stat-sub">revenue minus product cost</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-label">Total Invoices</div>
+      <div class="stat-value">${invoices.length}</div>
+      <div class="stat-sub">${lastMonth.length} last month ${trend(thisMonth.length,lastMonth.length)}</div>
+    </div>
   </div>
 
   <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px">
@@ -2848,13 +3299,46 @@ function exportCustomersCSV(){
 function exportData(){
   const data={
     version:1, exportedAt:new Date().toISOString(),
-    settings,products,customers,repairs,invoices
+    settings,products,customers,repairs,invoices,
+    staff,cashSessions,auditLog
   };
   const blob=new Blob([JSON.stringify(data,null,2)],{type:'application/json'});
   const a=document.createElement('a');
   a.href=URL.createObjectURL(blob);
-  a.download=`MobileShopCRM_backup_${today()}.json`;
+  a.download=`TechPro_backup_${today()}.json`;
   a.click();
+  localStorage.setItem('mshop_last_backup', new Date().toISOString());
+  const el=document.getElementById('backup-reminder-banner');
+  if(el) el.remove();
+  showAlert('global-alert','✅ Backup downloaded — store it somewhere safe (Google Drive, email yourself)','green');
+}
+
+function checkBackupReminder(){
+  const last=localStorage.getItem('mshop_last_backup');
+  if(!last){ // Never backed up
+    if(invoices.length>0||customers.length>2){
+      showBackupBanner('⚠️ You have live data but have never exported a backup. If this browser is cleared you will lose everything.');
+    }
+    return;
+  }
+  const daysSince=Math.floor((Date.now()-new Date(last).getTime())/86400000);
+  if(daysSince>=7){
+    showBackupBanner(`⚠️ Last backup was ${daysSince} day${daysSince!==1?'s':''} ago. Export a fresh backup to keep your data safe.`);
+  }
+}
+
+function showBackupBanner(msg){
+  let el=document.getElementById('backup-reminder-banner');
+  if(el) return; // already showing
+  el=document.createElement('div');
+  el.id='backup-reminder-banner';
+  el.style.cssText='position:fixed;top:0;left:0;right:0;z-index:8888;background:#b8860b;color:#fff;padding:10px 20px;font-size:12px;font-weight:600;display:flex;align-items:center;justify-content:space-between;gap:12px';
+  el.innerHTML=`<span>💾 ${msg}</span>
+    <div style="display:flex;gap:8px;flex-shrink:0">
+      <button onclick="exportData()" style="background:rgba(255,255,255,.2);border:1px solid rgba(255,255,255,.4);color:#fff;padding:4px 12px;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer">Export Now</button>
+      <button onclick="document.getElementById('backup-reminder-banner').remove()" style="background:none;border:none;color:rgba(255,255,255,.7);cursor:pointer;font-size:16px">✕</button>
+    </div>`;
+  document.body.prepend(el);
 }
 
 function importData(e){
@@ -2899,7 +3383,7 @@ function renderCashUp(c){
     <div class="alert alert-green mb-3">✓ Today's cash-up was completed at ${new Date(todaySession.closedAt).toLocaleTimeString()}</div>
     `:''}
 
-    <div class="stats-grid">
+    <div class="stats-grid" style="grid-template-columns:repeat(4,1fr)">
       <div class="stat-card"><div class="stat-label">Total Sales Today</div><div class="stat-value text-green">${fmt(totalSales)}</div><div class="stat-sub">${todayInvoices.length} invoices</div></div>
       <div class="stat-card"><div class="stat-label">Cash Sales</div><div class="stat-value">${fmt(cashSales)}</div></div>
       <div class="stat-card"><div class="stat-label">Card / Debit</div><div class="stat-value">${fmt(cardSales)}</div></div>
@@ -3644,53 +4128,98 @@ function showAlert(id,msg,type='green'){
 // GLOBAL CUSTOMER QUICK-SEARCH
 // Works from any page — shows customer profile + recent repairs/invoices
 // ══════════════════════════════════════════════════════════
-function globalCustomerSearch(q){
+function globalUnifiedSearch(q){
   const results=document.getElementById('global-search-results');
   if(!results) return;
   q=(q||'').trim().toLowerCase();
   if(q.length<2){ results.innerHTML=''; return; }
 
-  const matches=customers.filter(c=>
-    c.name.toLowerCase().includes(q) ||
-    c.phone.includes(q) ||
-    (c.email||'').toLowerCase().includes(q)
-  ).slice(0,6);
+  const clearSearch=()=>{
+    document.getElementById('global-cust-search').value='';
+    results.innerHTML='';
+  };
 
-  if(matches.length===0){
-    results.innerHTML=`<div style="padding:14px;font-size:13px;color:var(--text3);text-align:center">No customers found for "${escH(q)}"</div>`;
+  // ── Customers ────────────────────────────────────────────
+  const custMatches=customers.filter(c=>
+    c.name.toLowerCase().includes(q)||c.phone.includes(q)||(c.email||'').toLowerCase().includes(q)
+  ).slice(0,4);
+
+  // ── Repairs ─────────────────────────────────────────────
+  const repairMatches=repairs.filter(r=>
+    String(r.ticketNo).includes(q)||
+    r.customerName.toLowerCase().includes(q)||
+    r.device.toLowerCase().includes(q)||
+    (r.issue||'').toLowerCase().includes(q)
+  ).slice(0,3);
+
+  // ── Invoices ─────────────────────────────────────────────
+  const invMatches=invoices.filter(i=>
+    i.number.toLowerCase().includes(q)||
+    (i.customerName||'').toLowerCase().includes(q)||
+    (i.customerPhone||'').includes(q)
+  ).slice(0,3);
+
+  // ── Products ─────────────────────────────────────────────
+  const prodMatches=products.filter(p=>
+    p.name.toLowerCase().includes(q)||p.sku.toLowerCase().includes(q)||
+    (p.subcategory||'').toLowerCase().includes(q)
+  ).slice(0,3);
+
+  if(!custMatches.length&&!repairMatches.length&&!invMatches.length&&!prodMatches.length){
+    results.innerHTML=`<div style="padding:16px;font-size:13px;color:var(--text3);text-align:center">No results for "<strong>${escH(q)}</strong>"</div>`;
     return;
   }
 
-  results.innerHTML=matches.map(c=>{
-    const custRepairs=repairs.filter(r=>r.customerId===c.id);
-    const openRepair=custRepairs.find(r=>!['COMPLETED','COLLECTED'].includes(r.status));
-    const custInvs=invoices.filter(i=>i.customerId===c.id);
-    return `
-    <div onclick="openCustomerDetail('${c.id}');document.getElementById('global-cust-search').value='';document.getElementById('global-search-results').innerHTML=''"
-      style="padding:12px 14px;cursor:pointer;border-bottom:1px solid var(--border);transition:background .1s"
-      onmouseenter="this.style.background='var(--surface2)'"
-      onmouseleave="this.style.background='transparent'">
-      <div style="display:flex;align-items:center;gap:10px">
-        <div style="width:34px;height:34px;border-radius:50%;background:var(--accent2);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;flex-shrink:0">
-          ${escH(c.name.charAt(0).toUpperCase())}
-        </div>
-        <div style="flex:1;min-width:0">
-          <p style="font-weight:700;font-size:13px">${escH(c.name)}</p>
-          <p style="font-size:11px;color:var(--text3);font-family:var(--mono)">${escH(c.phone)}</p>
-        </div>
-        <div style="text-align:right;flex-shrink:0">
-          <p style="font-size:12px;font-weight:600;color:var(--green)">${fmt(c.spent)}</p>
-          <p style="font-size:10px;color:var(--text3)">${c.points} pts</p>
-        </div>
-      </div>
-      ${openRepair?`
-      <div style="margin-top:7px;padding:5px 8px;background:var(--amber-bg);border-radius:6px;font-size:11px;color:var(--amber)">
-        🔧 Open repair: ${escH(openRepair.device)} — <span class="font-bold">${STATUS_LABELS[openRepair.status]}</span>
-      </div>`:''}
-      ${custInvs.length?`<p style="font-size:11px;color:var(--text3);margin-top:5px">${custInvs.length} invoice${custInvs.length!==1?'s':''} · Last: ${fmtDate(custInvs[custInvs.length-1]?.date)}</p>`:''}
+  const section=(title,icon,html)=>html?`
+    <div style="padding:8px 14px 4px;font-size:10px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;color:var(--text3);border-bottom:1px solid var(--border)">${icon} ${title}</div>
+    ${html}`:'';
+
+  const row=(content,onClick)=>`
+    <div onclick="${onClick};(${clearSearch})()" style="padding:10px 14px;cursor:pointer;border-bottom:1px solid var(--border);transition:background .1s" onmouseenter="this.style.background='var(--surface2)'" onmouseleave="this.style.background='transparent'">
+      ${content}
     </div>`;
-  }).join('');
+
+  results.innerHTML=`
+  ${section('Customers','👤', custMatches.map(c=>{
+    const openR=repairs.find(r=>r.customerId===c.id&&!['COMPLETED','COLLECTED'].includes(r.status));
+    return row(`
+      <div style="display:flex;align-items:center;gap:10px">
+        <div style="width:32px;height:32px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;color:#fff;flex-shrink:0">${c.name.charAt(0).toUpperCase()}</div>
+        <div style="flex:1"><p style="font-weight:700;font-size:13px">${escH(c.name)}</p><p style="font-size:11px;color:var(--text3)">${escH(c.phone)}${c.email?` · ${escH(c.email)}`:''}</p></div>
+        <div style="text-align:right"><p style="font-size:12px;font-weight:700;color:var(--green)">${fmt(c.spent)}</p><p style="font-size:10px;color:var(--text3)">${c.points} pts</p></div>
+      </div>
+      ${openR?`<div style="margin-top:5px;padding:4px 8px;background:var(--amber-bg);border-radius:5px;font-size:11px;color:var(--amber)">🔧 Open: ${escH(openR.device)} — ${STATUS_LABELS[openR.status]}</div>`:''}`,
+      `showPage('customers');openCustomerDetail('${c.id}')`);
+  }).join(''))}
+
+  ${section('Repair Tickets','🔧', repairMatches.map(r=>row(`
+    <div style="display:flex;align-items:center;gap:10px">
+      <span class="badge ${STATUS_BADGE[r.status]}" style="flex-shrink:0">${STATUS_LABELS[r.status]}</span>
+      <div style="flex:1"><p style="font-weight:700;font-size:13px">#${r.ticketNo} — ${escH(r.device)}</p><p style="font-size:11px;color:var(--text3)">${escH(r.customerName)} · ${escH(r.issue||'')}</p></div>
+      ${r.promisedBy?`<span style="font-size:10px;color:${r.promisedBy<today()?'var(--red)':'var(--text3)'}">${fmtDate(r.promisedBy)}</span>`:''}
+    </div>`,
+    `showPage('repairs');openRepairDetail('${r.id}')`)).join(''))}
+
+  ${section('Invoices','🧾', invMatches.map(i=>row(`
+    <div style="display:flex;align-items:center;gap:10px">
+      <span class="font-mono text-accent" style="font-size:12px;flex-shrink:0">${escH(i.number)}</span>
+      <div style="flex:1"><p style="font-weight:700;font-size:13px">${escH(i.customerName||'Walk-in')}</p><p style="font-size:11px;color:var(--text3)">${fmtDate(i.date)} · ${escH(i.payment)}</p></div>
+      <span style="font-weight:700;font-size:13px;color:var(--green)">${fmt(i.total)}</span>
+    </div>`,
+    `showPage('refunds')`)).join(''))}
+
+  ${section('Products','📦', prodMatches.map(p=>row(`
+    <div style="display:flex;align-items:center;gap:10px">
+      <span class="badge badge-blue" style="flex-shrink:0">${p.category}</span>
+      <div style="flex:1"><p style="font-weight:700;font-size:13px">${escH(p.name)}</p><p style="font-size:11px;color:var(--text3);font-family:var(--mono)">${escH(p.sku)}</p></div>
+      <div style="text-align:right"><p style="font-size:13px;font-weight:700">${fmt(p.price)}</p><p style="font-size:10px;color:${p.stock<=p.threshold?'var(--red)':'var(--text3)'}">${p.stock} in stock</p></div>
+    </div>`,
+    `showPage('inventory')`)).join(''))}
+  `;
 }
+
+// Keep old name as alias so any remaining references don't break
+const globalCustomerSearch = globalUnifiedSearch;
 
 // ══════════════════════════════════════════════════════════
 // CLOUD HELPERS
@@ -3745,6 +4274,8 @@ function updateStaffDisplay(){
 updateStaffDisplay();
 // Require PIN login on startup if enabled
 if(settings.pinLocked){ setTimeout(pinLogin, 100); }
+// Check if backup is overdue
+setTimeout(checkBackupReminder, 2000);
 </script>
 </body>
 </html>
