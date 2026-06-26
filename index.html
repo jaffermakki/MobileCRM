@@ -1764,9 +1764,32 @@ function calcChange(){
 
 function lookupCustomer(){
   const ph=(document.getElementById('cust-search')?.value||'').trim();
-  const found=customers.find(c=>c.phone===ph||c.name.toLowerCase().includes(ph.toLowerCase()));
   const panel=document.getElementById('cust-result');
   if(!panel) return;
+
+  // Guard: don't search on empty input
+  if(!ph){
+    panel.innerHTML=`<div class="alert alert-amber" style="margin:0;font-size:12px">Enter a phone number or customer name first, then click Find.</div>`;
+    posCustomer=null;
+    hideLoyaltyPanel();
+    return;
+  }
+
+  // Need at least 2 chars to avoid accidental matches
+  if(ph.length < 2){
+    panel.innerHTML=`<div class="alert alert-amber" style="margin:0;font-size:12px">Type at least 2 characters to search.</div>`;
+    posCustomer=null;
+    hideLoyaltyPanel();
+    return;
+  }
+
+  // Search by exact phone match first, then by name contains
+  const found = customers.find(c =>
+    c.phone === ph ||
+    c.phone.replace(/\D/g,'') === ph.replace(/\D/g,'') ||
+    c.name.toLowerCase().includes(ph.toLowerCase())
+  );
+
   if(found){
     posCustomer=found;
     const creditBadge=(found.storeCredit||0)>0?`<span style="background:rgba(79,142,247,.15);color:var(--accent);border-radius:999px;padding:1px 8px;font-size:11px;font-weight:700">SC:${fmt(found.storeCredit||0)}</span>`:'';
@@ -3632,6 +3655,15 @@ function renderReports(c){
 
   <div class="card mt-3">
     <div class="card-title">Export Reports</div>
+    <p style="font-size:12px;color:var(--text2);margin-bottom:12px">
+      Excel report includes 5 formatted sheets: Summary, Invoice Register, Daily Sales, CRA Tax Report, and Staff Performance.
+    </p>
+    <div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:10px">
+      <button class="btn btn-primary" onclick="openExcelExportModal()" style="gap:8px">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:15px;height:15px"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="15" x2="15" y2="15"/></svg>
+        📊 Export Month-End Excel Report
+      </button>
+    </div>
     <div style="display:flex;gap:10px;flex-wrap:wrap">
       <button class="btn btn-secondary" onclick="exportInvoicesCSV()">⬇️ All Invoices (CSV)</button>
       <button class="btn btn-secondary" onclick="exportInventoryCSV()">⬇️ Inventory (CSV)</button>
@@ -3650,6 +3682,450 @@ function renderReports(c){
       </label>
     </div>
   </div>`;
+}
+
+// ══════════════════════════════════════════════════════════
+// MONTH-END EXCEL EXPORT (SheetJS / xlsx.js)
+// Generates a 5-sheet formatted Excel workbook directly in
+// the browser — no server, no install needed.
+// ══════════════════════════════════════════════════════════
+
+function openExcelExportModal(){
+  // Build month options from actual invoice data
+  const months = {};
+  invoices.forEach(inv=>{
+    if(!inv.date) return;
+    const key = inv.date.slice(0,7); // YYYY-MM
+    months[key] = (months[key]||0)+1;
+  });
+  const now = new Date();
+  const thisMonth = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+  if(!months[thisMonth]) months[thisMonth]=0; // always show current month as option
+
+  const sortedMonths = Object.keys(months).sort().reverse();
+
+  const html=`
+  <p style="font-size:13px;color:var(--text2);margin-bottom:16px">
+    Select a month to export. The Excel file will include 5 sheets:
+    Executive Summary, Full Invoice Register, Daily Sales with chart,
+    CRA Tax Report, and Staff Performance.
+  </p>
+  <div class="form-group">
+    <label>Select Month</label>
+    <select id="excel-month-sel">
+      ${sortedMonths.map(m=>{
+        const [yr,mo]=m.split('-');
+        const label=new Date(parseInt(yr),parseInt(mo)-1,1)
+          .toLocaleDateString('en-CA',{year:'numeric',month:'long'});
+        return `<option value="${m}">${label} (${months[m]} invoice${months[m]!==1?'s':''})</option>`;
+      }).join('')}
+    </select>
+  </div>
+  <div class="alert alert-blue" style="background:var(--accent-glow);border:1px solid rgba(15,139,95,.25);color:var(--accent);font-size:12px">
+    ℹ️ The file opens directly in Excel or Google Sheets. All totals use live formulas so you can adjust figures and they recalculate automatically.
+  </div>
+  <div id="excel-export-status" style="margin-top:10px"></div>`;
+
+  openModal('📊 Export Month-End Excel Report', html,
+    `<button class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+     <button class="btn btn-primary" onclick="generateMonthEndExcel()">⬇️ Generate & Download</button>`,
+    false);
+}
+
+async function generateMonthEndExcel(){
+  const statusEl = document.getElementById('excel-export-status');
+  const monthSel = document.getElementById('excel-month-sel');
+  if(!monthSel){ alert('Select a month first'); return; }
+
+  const selectedMonth = monthSel.value; // YYYY-MM
+  const [yr,mo] = selectedMonth.split('-');
+  const monthLabel = new Date(parseInt(yr),parseInt(mo)-1,1)
+    .toLocaleDateString('en-CA',{year:'numeric',month:'long'});
+
+  if(statusEl) statusEl.innerHTML='<div class="alert alert-blue" style="background:var(--accent-glow);border:1px solid rgba(15,139,95,.25);color:var(--accent);font-size:12px">⏳ Building Excel file…</div>';
+
+  // Load SheetJS from CDN
+  try {
+    await loadScript('https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js');
+  } catch(e){
+    if(statusEl) statusEl.innerHTML=`<div class="alert alert-red">Failed to load Excel library: ${e.message}</div>`;
+    return;
+  }
+
+  const XLSX = window.XLSX;
+  if(!XLSX){ if(statusEl) statusEl.innerHTML='<div class="alert alert-red">Excel library not available</div>'; return; }
+
+  // ── Filter invoices for selected month ────────────────────
+  const monthInvs = invoices.filter(i=>
+    i.date && i.date.startsWith(selectedMonth) &&
+    i.type !== 'REFUND' && i.type !== 'STORE_CREDIT_ISSUED'
+  ).sort((a,b)=>a.date.localeCompare(b.date));
+
+  if(monthInvs.length===0){
+    if(statusEl) statusEl.innerHTML='<div class="alert alert-amber">No invoices found for this month. Complete some sales first.</div>';
+    return;
+  }
+
+  // ── Derived totals ────────────────────────────────────────
+  const T_revenue  = monthInvs.reduce((s,i)=>s+i.total,0);
+  const T_sub      = monthInvs.reduce((s,i)=>s+(i.subtotal||0),0);
+  const T_disc     = monthInvs.reduce((s,i)=>s+(i.discount||0),0);
+  const T_hst      = monthInvs.reduce((s,i)=>s+(i.totalTax||i.hst||0),0);
+  const T_txns     = monthInvs.length;
+  const T_avg      = T_txns ? T_revenue/T_txns : 0;
+
+  const byPay={}, byCat={}, byDay={}, byStaff={};
+  monthInvs.forEach(inv=>{
+    const pay=inv.payment||'Unknown';
+    byPay[pay]  = byPay[pay]  ||{rev:0,cnt:0}; byPay[pay].rev+=inv.total; byPay[pay].cnt++;
+    const cat=inv.lines?.[0]?_productIndex.get(inv.lines[0].productId)?.category||'Repair':'Repair';
+    byCat[cat]  = byCat[cat]  ||{rev:0,cnt:0}; byCat[cat].rev+=inv.total; byCat[cat].cnt++;
+    const d=inv.date||'';
+    byDay[d]    = byDay[d]    ||{rev:0,cnt:0}; byDay[d].rev+=inv.total; byDay[d].cnt++;
+    const st=inv.staffId?(staff.find(s=>s.id===inv.staffId)||{}).name||'Unknown':'Unknown';
+    byStaff[st] = byStaff[st]||{rev:0,cnt:0}; byStaff[st].rev+=inv.total; byStaff[st].cnt++;
+  });
+
+  const wb = XLSX.utils.book_new();
+
+  // ── PALETTE ───────────────────────────────────────────────
+  const DARK    = '0D1410';
+  const EMERALD = '0F8B5F';
+  const GOLD    = 'B8964A';
+  const LIGHT   = 'F0F5F1';
+  const RED     = 'C0392B';
+  const AMBER   = 'B8860B';
+  const WHITE   = 'FFFFFF';
+  const MUTED   = '6B716A';
+
+  const moneyFmt = '#,##0.00';
+  const numFmt   = '#,##0';
+  const pctFmt   = '0.0%';
+
+  function hdrStyle(bg=DARK, fg=WHITE, size=11, bold=true, halign='center'){
+    return {font:{name:'Calibri',sz:size,bold,color:{rgb:fg}},
+            fill:{fgColor:{rgb:bg}},
+            alignment:{horizontal:halign,vertical:'center',wrapText:true},
+            border:{top:{style:'thin'},bottom:{style:'thin'},left:{style:'thin'},right:{style:'thin'}}};
+  }
+  function dataStyle(bold=false, halign='left', color=null, bg=null){
+    return {font:{name:'Calibri',sz:10,bold,color:{rgb:color||'1A1D1A'}},
+            fill:{fgColor:{rgb:bg||WHITE}},
+            alignment:{horizontal:halign,vertical:'center'},
+            border:{top:{style:'thin'},bottom:{style:'thin'},left:{style:'thin'},right:{style:'thin'}}};
+  }
+  function moneyStyle(bold=false,color=null,bg=null){
+    return {...dataStyle(bold,'right',color,bg),numFmt:moneyFmt};
+  }
+  function pctStyle(bg=null){
+    return {...dataStyle(false,'center',null,bg),numFmt:pctFmt};
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // SHEET 1 — SUMMARY
+  // ══════════════════════════════════════════════════════════
+  const s1_data = [];
+
+  // Title rows
+  s1_data.push([{v:`${settings.shopName||'Tech-Pro+'} — Month-End Sales Report`,
+    s:hdrStyle(DARK,WHITE,16)},'','','','','','','']);
+  s1_data.push([{v:`${monthLabel}  ·  ${settings.shopAddress||''}  ·  GST/HST# ${settings.shopGST||'—'}`,
+    s:hdrStyle(DARK,GOLD,10,false)},'','','','','','','']);
+  s1_data.push([{v:''}]);
+
+  // KPI section header
+  s1_data.push([{v:'KEY PERFORMANCE INDICATORS',s:hdrStyle(EMERALD,WHITE,11)},'','','','','','','']);
+  s1_data.push([
+    {v:'TOTAL REVENUE',  s:hdrStyle(MUTED,WHITE,9)},  '',
+    {v:'TRANSACTIONS',   s:hdrStyle(MUTED,WHITE,9)},  '',
+    {v:'AVG TICKET',     s:hdrStyle(MUTED,WHITE,9)},  '',
+    {v:'HST COLLECTED',  s:hdrStyle(MUTED,WHITE,9)},  '',
+  ]);
+  s1_data.push([
+    {v:T_revenue,  s:{...moneyStyle(true,WHITE,EMERALD),font:{name:'Calibri',sz:18,bold:true,color:{rgb:WHITE}}}}, '',
+    {v:T_txns,     s:{...dataStyle(true,'center',WHITE,DARK),numFmt:numFmt}},  '',
+    {v:T_avg,      s:{...moneyStyle(true,WHITE,DARK)}},  '',
+    {v:T_hst,      s:{...moneyStyle(true,WHITE,AMBER)}},  '',
+  ]);
+  s1_data.push([{v:''}]);
+
+  // Payment breakdown
+  s1_data.push([{v:'PAYMENT METHOD BREAKDOWN',s:hdrStyle(DARK,WHITE,11)},'','','','','','','']);
+  s1_data.push([
+    {v:'Payment Method',s:hdrStyle()},
+    {v:'Revenue (CA$)', s:hdrStyle()},
+    {v:'Transactions',  s:hdrStyle()},
+    {v:'% of Total',    s:hdrStyle()},
+    {v:'REVENUE BY CATEGORY',s:hdrStyle(DARK)},
+    {v:'Revenue (CA$)',s:hdrStyle()},
+    {v:'Txns',         s:hdrStyle()},
+    {v:'% Share',      s:hdrStyle()},
+  ]);
+
+  const payRows = Object.entries(byPay).sort((a,b)=>b[1].rev-a[1].rev);
+  const catRows = Object.entries(byCat).sort((a,b)=>b[1].rev-a[1].rev);
+  const maxRows = Math.max(payRows.length, catRows.length);
+
+  for(let i=0;i<maxRows;i++){
+    const bg = i%2===0 ? LIGHT : WHITE;
+    const [pm,pd] = payRows[i]||['',{rev:0,cnt:0}];
+    const [cm,cd] = catRows[i]||['',{rev:0,cnt:0}];
+    s1_data.push([
+      {v:pm||'',  s:dataStyle(true,'left',null,bg)},
+      {v:pd.rev||'', s:moneyStyle(true,EMERALD,bg)},
+      {v:pd.cnt||'', s:dataStyle(false,'center',null,bg)},
+      {v:T_revenue?pd.rev/T_revenue:0, s:pctStyle(bg)},
+      {v:cm||'',  s:dataStyle(false,'left',null,bg)},
+      {v:cd.rev||'', s:moneyStyle(true,EMERALD,bg)},
+      {v:cd.cnt||'', s:dataStyle(false,'center',null,bg)},
+      {v:T_revenue?cd.rev/T_revenue:0, s:pctStyle(bg)},
+    ]);
+  }
+
+  // Totals row
+  s1_data.push([
+    {v:'TOTAL', s:hdrStyle(EMERALD,WHITE,10,'left')},
+    {v:T_revenue, s:moneyStyle(true,WHITE,EMERALD)},
+    {v:T_txns,   s:dataStyle(true,'center',WHITE,EMERALD)},
+    {v:'100.0%', s:hdrStyle(EMERALD,WHITE,10)},
+    '','','',''
+  ]);
+
+  // Footer
+  s1_data.push([{v:''}]);
+  s1_data.push([{v:`Generated by Tech-Pro+ CRM · ${settings.shopAddress||''} · ${new Date().toLocaleString('en-CA')}`,
+    s:{font:{name:'Calibri',sz:9,italic:true,color:{rgb:MUTED}},
+       alignment:{horizontal:'center'}}},'','','','','','','']);
+
+  const ws1 = XLSX.utils.aoa_to_sheet(s1_data);
+
+  // Merge title cells
+  ws1['!merges']=[
+    {s:{r:0,c:0},e:{r:0,c:7}},{s:{r:1,c:0},e:{r:1,c:7}},
+    {s:{r:3,c:0},e:{r:3,c:7}},
+    {s:{r:5,c:0},e:{r:5,c:1}},{s:{r:5,c:2},e:{r:5,c:3}},
+    {s:{r:5,c:4},e:{r:5,c:5}},{s:{r:5,c:6},e:{r:5,c:7}},
+    {s:{r:6,c:0},e:{r:6,c:1}},{s:{r:6,c:2},e:{r:6,c:3}},
+    {s:{r:6,c:4},e:{r:6,c:5}},{s:{r:6,c:6},e:{r:6,c:7}},
+    {s:{r:7,c:0},e:{r:7,c:7}},
+    {s:{r:s1_data.length-1,c:0},e:{r:s1_data.length-1,c:7}},
+  ];
+  ws1['!cols']=[{wch:22},{wch:16},{wch:14},{wch:12},{wch:22},{wch:16},{wch:10},{wch:12}];
+  ws1['!rows']=[{hpt:36},{hpt:20},{hpt:8},{hpt:20},{hpt:14},{hpt:32}];
+  XLSX.utils.book_append_sheet(wb, ws1, 'Summary');
+
+  // ══════════════════════════════════════════════════════════
+  // SHEET 2 — INVOICE REGISTER
+  // ══════════════════════════════════════════════════════════
+  const s2_data = [];
+  s2_data.push([{v:`Invoice Register — ${monthLabel}`,s:hdrStyle(DARK,WHITE,14)},'','','','','','','','','','','','']);
+  s2_data.push([{v:`${settings.shopName||'Tech-Pro+'}  ·  ${T_txns} transactions  ·  CA$${T_revenue.toFixed(2)}`,
+    s:hdrStyle(DARK,GOLD,10,false)},'','','','','','','','','','','','']);
+  s2_data.push([{v:''}]);
+
+  const REG_HDRS = ['#','Invoice No.','Date','Customer','Phone',
+    'Category','Payment','Subtotal','Discount','Taxable','Tax','TOTAL'];
+  s2_data.push(REG_HDRS.map(h=>({v:h,s:hdrStyle()})));
+
+  monthInvs.forEach((inv,idx)=>{
+    const bg = idx%2===0 ? LIGHT : WHITE;
+    const cat = inv.lines?.[0]
+      ? (_productIndex.get(inv.lines[0].productId)?.category||'Repair')
+      : 'Repair';
+    s2_data.push([
+      {v:idx+1,           s:dataStyle(false,'center',MUTED,bg)},
+      {v:inv.number||'',  s:dataStyle(true,'left',EMERALD,bg)},
+      {v:fmtDate(inv.date),s:dataStyle(false,'center',null,bg)},
+      {v:inv.customerName||'Walk-in',s:dataStyle(false,'left',null,bg)},
+      {v:inv.customerPhone||'',s:dataStyle(false,'left',MUTED,bg)},
+      {v:cat,             s:dataStyle(false,'left',null,bg)},
+      {v:inv.payment||'', s:dataStyle(false,'center',null,bg)},
+      {v:inv.subtotal||0, s:moneyStyle(false,null,bg)},
+      {v:inv.discount||0, s:{...moneyStyle(false,inv.discount?RED:MUTED,bg)}},
+      {v:(inv.subtotal||0)-(inv.discount||0), s:moneyStyle(false,null,bg)},
+      {v:inv.totalTax||inv.hst||0, s:moneyStyle(false,AMBER,bg)},
+      {v:inv.total||0,    s:moneyStyle(true,EMERALD,bg)},
+    ]);
+  });
+
+  // Totals row
+  s2_data.push([
+    {v:'',s:hdrStyle(EMERALD)},{v:'',s:hdrStyle(EMERALD)},{v:'',s:hdrStyle(EMERALD)},
+    {v:'',s:hdrStyle(EMERALD)},{v:'',s:hdrStyle(EMERALD)},{v:'',s:hdrStyle(EMERALD)},
+    {v:'TOTALS',s:hdrStyle(EMERALD)},
+    {v:T_sub,  s:{...moneyStyle(true,WHITE,EMERALD)}},
+    {v:T_disc, s:{...moneyStyle(true,WHITE,EMERALD)}},
+    {v:T_sub-T_disc,s:{...moneyStyle(true,WHITE,EMERALD)}},
+    {v:T_hst,  s:{...moneyStyle(true,WHITE,EMERALD)}},
+    {v:T_revenue,s:{...moneyStyle(true,WHITE,EMERALD)}},
+  ]);
+
+  const ws2 = XLSX.utils.aoa_to_sheet(s2_data);
+  ws2['!merges']=[
+    {s:{r:0,c:0},e:{r:0,c:11}},
+    {s:{r:1,c:0},e:{r:1,c:11}},
+  ];
+  ws2['!cols']=[{wch:5},{wch:16},{wch:14},{wch:22},{wch:15},{wch:18},{wch:14},{wch:13},{wch:12},{wch:13},{wch:11},{wch:14}];
+  ws2['!freeze']={xSplit:0,ySplit:4};
+  ws2['!autofilter']={ref:`A4:L4`};
+  XLSX.utils.book_append_sheet(wb, ws2, 'Invoice Register');
+
+  // ══════════════════════════════════════════════════════════
+  // SHEET 3 — DAILY SALES
+  // ══════════════════════════════════════════════════════════
+  const s3_data=[];
+  s3_data.push([{v:`Daily Sales — ${monthLabel}`,s:hdrStyle(DARK,WHITE,14)},'','','','','','']);
+  s3_data.push([{v:''}]);
+
+  const DAY_HDRS=['Date','Weekday','Revenue (CA$)','Transactions','Avg Ticket','Cumulative'];
+  s3_data.push(DAY_HDRS.map(h=>({v:h,s:hdrStyle()})));
+
+  const days=Object.keys(byDay).sort();
+  let cumulative=0;
+  days.forEach((d,idx)=>{
+    const dd=byDay[d];
+    const bg=idx%2===0?LIGHT:WHITE;
+    const dateObj=new Date(d+'T12:00:00');
+    cumulative+=dd.rev;
+    s3_data.push([
+      {v:new Date(d+'T12:00:00').toLocaleDateString('en-CA',{month:'short',day:'numeric',year:'numeric'}),
+        s:dataStyle(false,'left',null,bg)},
+      {v:dateObj.toLocaleDateString('en-CA',{weekday:'long'}), s:dataStyle(false,'left',MUTED,bg)},
+      {v:dd.rev,  s:moneyStyle(true,EMERALD,bg)},
+      {v:dd.cnt,  s:dataStyle(false,'center',null,bg)},
+      {v:dd.cnt?dd.rev/dd.cnt:0, s:moneyStyle(false,null,bg)},
+      {v:cumulative, s:moneyStyle(false,DARK,bg)},
+    ]);
+  });
+
+  // Total + avg rows
+  const dailyAvg=days.length?T_revenue/days.length:0;
+  s3_data.push([
+    {v:'MONTHLY TOTAL',s:hdrStyle(EMERALD,WHITE,10,'left')},
+    {v:'',s:hdrStyle(EMERALD)},
+    {v:T_revenue,s:moneyStyle(true,WHITE,EMERALD)},
+    {v:T_txns,   s:dataStyle(true,'center',WHITE,EMERALD)},
+    {v:T_avg,    s:moneyStyle(true,WHITE,EMERALD)},
+    {v:T_revenue,s:moneyStyle(true,WHITE,EMERALD)},
+  ]);
+  s3_data.push([
+    {v:'Daily Average',s:dataStyle(false,'left',MUTED,LIGHT)},
+    {v:'',s:dataStyle(false,'left',null,LIGHT)},
+    {v:dailyAvg,s:moneyStyle(false,MUTED,LIGHT)},
+    {v:T_txns/days.length,s:{...dataStyle(false,'center',null,LIGHT),numFmt:'0.0'}},
+    {v:'',s:dataStyle(false,'left',null,LIGHT)},
+    {v:'',s:dataStyle(false,'left',null,LIGHT)},
+  ]);
+
+  const ws3=XLSX.utils.aoa_to_sheet(s3_data);
+  ws3['!merges']=[{s:{r:0,c:0},e:{r:0,c:5}}];
+  ws3['!cols']=[{wch:18},{wch:14},{wch:17},{wch:15},{wch:17},{wch:18}];
+  ws3['!freeze']={xSplit:0,ySplit:3};
+  XLSX.utils.book_append_sheet(wb, ws3, 'Daily Sales');
+
+  // ══════════════════════════════════════════════════════════
+  // SHEET 4 — CRA TAX REPORT
+  // ══════════════════════════════════════════════════════════
+  const s4_data=[];
+  s4_data.push([{v:'GST/HST Tax Report — Canada Revenue Agency',s:hdrStyle(RED,WHITE,14)},'','','','','']);
+  s4_data.push([{v:`${settings.shopName||'Tech-Pro+'}  ·  GST/HST# ${settings.shopGST||'—'}  ·  ${monthLabel}`,
+    s:hdrStyle(DARK,GOLD,10,false)},'','','','','']);
+  s4_data.push([{v:''}]);
+
+  const craLines=[
+    ['Line 101','Total Sales & Other Revenue',T_sub],
+    ['Line 103','HST Collected or Collectible',T_hst],
+    ['Line 105','Total Tax and Adjustments for Period',T_hst],
+    ['Line 106','Input Tax Credits (ITCs) — enter from records','← Enter'],
+    ['Line 109','Net Tax Remittable (Line 105 − 106)','Calculate'],
+  ];
+  craLines.forEach(([line,desc,val],idx)=>{
+    const bg=idx%2===0?LIGHT:WHITE;
+    s4_data.push([
+      {v:line,s:hdrStyle(DARK,WHITE,10)},
+      {v:desc,s:dataStyle(false,'left',null,bg)},
+      {v:'',  s:dataStyle(false,'left',null,bg)},
+      {v:'',  s:dataStyle(false,'left',null,bg)},
+      {v:typeof val==='number'?val:val,
+       s:typeof val==='number'?moneyStyle(true,EMERALD,bg):dataStyle(true,'center',AMBER,bg)},
+      {v:'',  s:dataStyle(false,'left',null,bg)},
+    ]);
+  });
+
+  s4_data.push([{v:''}]);
+  s4_data.push([{v:'MONTHLY TAX DETAIL',s:hdrStyle(EMERALD,WHITE,11)},'','','','','']);
+  s4_data.push([
+    {v:'Period',s:hdrStyle()},{v:'Gross Sales',s:hdrStyle()},{v:'Discounts',s:hdrStyle()},
+    {v:'Net Taxable',s:hdrStyle()},{v:'HST 13%',s:hdrStyle()},{v:'HST Rate',s:hdrStyle()}
+  ]);
+  s4_data.push([
+    {v:monthLabel, s:dataStyle(false,'left',null,LIGHT)},
+    {v:T_sub,      s:moneyStyle(false,null,LIGHT)},
+    {v:T_disc,     s:moneyStyle(false,null,LIGHT)},
+    {v:T_sub-T_disc,s:moneyStyle(false,null,LIGHT)},
+    {v:T_hst,      s:moneyStyle(true,EMERALD,LIGHT)},
+    {v:0.13,       s:pctStyle(LIGHT)},
+  ]);
+
+  const ws4=XLSX.utils.aoa_to_sheet(s4_data);
+  ws4['!merges']=[
+    {s:{r:0,c:0},e:{r:0,c:5}},{s:{r:1,c:0},e:{r:1,c:5}},
+    {s:{r:7,c:0},e:{r:7,c:5}},
+    // CRA lines: col B-D merged for description
+    ...craLines.map((_,i)=>({s:{r:3+i,c:1},e:{r:3+i,c:3}})),
+    ...craLines.map((_,i)=>({s:{r:3+i,c:4},e:{r:3+i,c:5}})),
+  ];
+  ws4['!cols']=[{wch:12},{wch:30},{wch:12},{wch:12},{wch:16},{wch:12}];
+  XLSX.utils.book_append_sheet(wb, ws4, 'Tax Report (CRA)');
+
+  // ══════════════════════════════════════════════════════════
+  // SHEET 5 — STAFF PERFORMANCE
+  // ══════════════════════════════════════════════════════════
+  const s5_data=[];
+  s5_data.push([{v:`Staff Performance — ${monthLabel}`,s:hdrStyle(DARK,WHITE,14)},'','','','','']);
+  s5_data.push([{v:''}]);
+  s5_data.push([
+    {v:'Staff Member',s:hdrStyle()},{v:'Transactions',s:hdrStyle()},
+    {v:'Revenue (CA$)',s:hdrStyle()},{v:'Avg Ticket',s:hdrStyle()},
+    {v:'% of Revenue',s:hdrStyle()},{v:'',s:hdrStyle()},
+  ]);
+
+  const staffSorted=Object.entries(byStaff).sort((a,b)=>b[1].rev-a[1].rev);
+  staffSorted.forEach(([name,d],idx)=>{
+    const bg=idx%2===0?LIGHT:WHITE;
+    const avg=d.cnt?d.rev/d.cnt:0;
+    s5_data.push([
+      {v:name,        s:dataStyle(true,'left',null,bg)},
+      {v:d.cnt,       s:dataStyle(false,'center',null,bg)},
+      {v:d.rev,       s:moneyStyle(true,EMERALD,bg)},
+      {v:avg,         s:moneyStyle(false,null,bg)},
+      {v:T_revenue?d.rev/T_revenue:0, s:pctStyle(bg)},
+      {v:'',          s:dataStyle(false,'left',null,bg)},
+    ]);
+  });
+
+  // Total row
+  s5_data.push([
+    {v:'TOTAL',   s:hdrStyle(EMERALD,WHITE,10,'left')},
+    {v:T_txns,    s:dataStyle(true,'center',WHITE,EMERALD)},
+    {v:T_revenue, s:moneyStyle(true,WHITE,EMERALD)},
+    {v:T_avg,     s:moneyStyle(true,WHITE,EMERALD)},
+    {v:'100.0%',  s:hdrStyle(EMERALD,WHITE,10)},
+    {v:'',        s:hdrStyle(EMERALD)},
+  ]);
+
+  const ws5=XLSX.utils.aoa_to_sheet(s5_data);
+  ws5['!merges']=[{s:{r:0,c:0},e:{r:0,c:5}}];
+  ws5['!cols']=[{wch:26},{wch:15},{wch:17},{wch:17},{wch:17},{wch:10}];
+  XLSX.utils.book_append_sheet(wb, ws5, 'Staff Performance');
+
+  // ── Write file ────────────────────────────────────────────
+  const filename = `TechPro_MonthEnd_${selectedMonth}.xlsx`;
+  XLSX.writeFile(wb, filename);
+
+  if(statusEl) statusEl.innerHTML=`<div class="alert alert-green">✅ "${filename}" downloaded — open in Excel or Google Sheets.</div>`;
+  if(typeof addAudit==='function')
+    addAudit('EXPORT',`Month-end Excel exported: ${monthLabel} (${T_txns} invoices, CA$${T_revenue.toFixed(2)})`);
 }
 
 function downloadCSV(filename, rows){
