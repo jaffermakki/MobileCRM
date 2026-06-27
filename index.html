@@ -29,7 +29,7 @@ html,body{height:100%;font-family:var(--font);background:var(--bg);color:var(--t
 ::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:var(--border2);border-radius:5px}
 ::-webkit-scrollbar-thumb:hover{background:#c2c7bd}
-/* Layout */
+/* ── Layout ────────────────────────────────────────────── */
 #app{display:flex;height:100vh;overflow:hidden}
 /* Sidebar */
 #sidebar{width:222px;flex-shrink:0;background:#0d1410;border-right:1px solid #1a2620;display:flex;flex-direction:column;padding:0}
@@ -50,12 +50,16 @@ nav{flex:1;padding:12px 8px;overflow-y:auto}
 .user-info p{font-size:12px;font-weight:600;color:#f5f5f0}
 .user-info span{font-size:10px;color:#5f6b62;font-family:var(--mono);letter-spacing:.4px}
 /* Main content */
-#main{flex:1;overflow:hidden;display:flex;flex-direction:column}
+#main{flex:1;overflow:hidden;display:flex;flex-direction:column;min-width:0}
 .topbar{padding:16px 26px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;background:var(--surface);flex-shrink:0}
 .topbar h2{font-size:17px;font-weight:700;color:var(--text);letter-spacing:-.2px}
 .topbar p{font-size:12px;color:var(--text2);margin-top:1px}
 .topbar-actions{display:flex;gap:8px}
-.page{flex:1;overflow-y:auto;padding:22px 26px}
+/* .page is the scroll container — flex:1 + min-height:0 is the key combo
+   that makes overflow-y:auto actually work inside a flex parent */
+.page{flex:1;overflow-y:auto;overflow-x:hidden;padding:22px 26px;min-height:0;
+      -webkit-overflow-scrolling:touch;scroll-behavior:smooth;
+      will-change:scroll-position}
 /* Buttons */
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:8px 16px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;border:none;transition:filter .12s,background .12s;text-decoration:none;font-family:var(--font);white-space:nowrap}
 .btn svg{width:14px;height:14px}
@@ -70,12 +74,12 @@ nav{flex:1;padding:12px 8px;overflow-y:auto}
 .btn-sm{padding:5px 10px;font-size:12px}
 .btn:disabled{opacity:.4;cursor:not-allowed}
 /* Cards */
-.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:18px;box-shadow:0 1px 3px rgba(0,0,0,.03)}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:18px;box-shadow:0 1px 3px rgba(0,0,0,.03);contain:layout style}
 .card-title{font-size:11.5px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.7px;margin-bottom:14px;display:flex;align-items:center;gap:6px}
 .card-title::before{content:'';width:3px;height:11px;background:var(--gold);border-radius:1px;display:inline-block}
 /* Stats */
 .stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px;margin-bottom:20px}
-.stat-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:16px;position:relative;overflow:hidden;transition:border-color .15s}
+.stat-card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);padding:16px;position:relative;overflow:hidden;transition:border-color .15s;contain:layout style}
 .stat-card:hover{border-color:var(--border2)}
 .stat-card::after{content:'';position:absolute;top:10px;right:10px;width:6px;height:6px;border-radius:50%;background:var(--border2)}
 .stat-label{font-size:11px;color:var(--text2);text-transform:uppercase;letter-spacing:.5px;font-weight:600}
@@ -92,8 +96,8 @@ textarea{resize:vertical;min-height:70px}
 .form-row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .form-row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
 /* Tables */
-.table-wrap{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:hidden}
-table{width:100%;border-collapse:collapse}
+.table-wrap{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg);overflow:auto;-webkit-overflow-scrolling:touch}
+table{width:100%;border-collapse:collapse;min-width:480px}
 th{padding:11px 14px;text-align:left;font-size:10.5px;font-weight:700;color:var(--text2);text-transform:uppercase;letter-spacing:.6px;background:var(--surface2);border-bottom:1px solid var(--border)}
 td{padding:11px 14px;font-size:13px;border-bottom:1px solid var(--border);vertical-align:middle}
 tr:last-child td{border-bottom:none}
@@ -124,10 +128,10 @@ tr:hover td{background:rgba(255,255,255,.025)}
 .alert-green{background:var(--green-bg);border-color:var(--green);color:var(--green)}
 .alert-amber{background:var(--amber-bg);border-color:var(--amber);color:var(--amber)}
 /* POS specific */
-.pos-layout{display:grid;grid-template-columns:1fr 320px;gap:16px;height:100%;min-height:0}
-.pos-left{display:flex;flex-direction:column;gap:12px;min-height:0}
-.pos-right{display:flex;flex-direction:column;gap:12px}
-.cart-wrap{flex:1;overflow:hidden;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--surface);display:flex;flex-direction:column}
+.pos-layout{display:grid;grid-template-columns:1fr 320px;gap:16px;min-height:0;flex:1}
+.pos-left{display:flex;flex-direction:column;gap:12px;min-height:0;overflow:hidden}
+.pos-right{display:flex;flex-direction:column;gap:12px;overflow-y:auto;min-height:0}
+.cart-wrap{flex:1;overflow:hidden;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--surface);display:flex;flex-direction:column;min-height:200px}
 .cart-header{padding:12px 14px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;background:var(--surface2)}
 .cart-body{flex:1;overflow-y:auto}
 .cart-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;height:200px;color:var(--text3);gap:8px}
@@ -1311,7 +1315,26 @@ function closeMobileSidebar(){
   document.body.style.overflow='';
 }
 
+// Scroll position memory — remember where user was on each page
+const _scrollMemory = {};
+
+function saveScrollPos(){
+  const pc = document.getElementById('page-content');
+  if(pc && currentPage) _scrollMemory[currentPage] = pc.scrollTop;
+}
+
+function restoreScrollPos(page){
+  const pc = document.getElementById('page-content');
+  if(!pc) return;
+  // Use requestAnimationFrame to restore after DOM has painted
+  requestAnimationFrame(()=>{
+    pc.scrollTop = _scrollMemory[page] || 0;
+  });
+}
+
 function showPage(p){
+  // Save scroll position of current page before leaving
+  saveScrollPos();
   // Close mobile sidebar when navigating
   closeMobileSidebar();
   currentPage=p;
@@ -1334,7 +1357,8 @@ function renderPage(p){
     reports:renderReports, cashup:renderCashUp, refunds:renderRefunds,
     staff:renderStaff, audit:renderAuditLog, settings:renderSettings
   };
-  c.innerHTML='';
+  // Always scroll to top when switching pages so content starts at top
+  if(c) c.scrollTop=0;
   if(pages[p]) pages[p](c);
 }
 
@@ -1473,15 +1497,19 @@ function renderDashboard(c){
   <div class="card mt-3">
     <div class="card-title">Recent Invoices</div>
     ${invoices.length===0?'<p class="text-muted" style="font-size:13px">No sales yet — go to Point of Sale to create your first invoice.</p>':
-    `<table><thead><tr><th>#</th><th>Customer</th><th>Items</th><th>Payment</th><th class="text-right">Total</th><th>Date</th></tr></thead><tbody>
+    `<table><thead><tr><th>#</th><th>Customer</th><th>Items</th><th>Payment</th><th class="text-right">Total</th><th>Date</th><th></th></tr></thead><tbody>
     ${invoices.slice(-8).reverse().map(inv=>`
     <tr>
-      <td class="font-mono text-accent">${inv.number}</td>
+      <td class="font-mono text-accent" style="font-size:12px">${inv.number}</td>
       <td>${escH(inv.customerName||'Walk-in')}</td>
       <td>${inv.lines.length} item${inv.lines.length!==1?'s':''}</td>
       <td>${escH(inv.payment)}</td>
       <td class="text-right font-bold">${fmt(inv.total)}</td>
-      <td class="text-muted">${fmtDate(inv.date)}</td>
+      <td class="text-muted" style="font-size:12px">${fmtDate(inv.date)}</td>
+      <td style="white-space:nowrap">
+        <button class="btn btn-secondary btn-sm" onclick="printInvoice(invoices.find(x=>x.id==='${inv.id}'))" title="Print invoice">🖨️</button>
+        <button class="btn btn-secondary btn-sm" style="margin-left:4px" onclick="emailInvoice('${inv.id}')" title="Email receipt">📧</button>
+      </td>
     </tr>`).join('')}
     </tbody></table>`}
   </div>`;
@@ -2442,7 +2470,7 @@ function renderRepairsNew(c){
   <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap;align-items:center">
     <input placeholder="Search customer, device, ticket #…" value="${escH(window._repairSearch||'')}"
       style="flex:1;min-width:180px" oninput="window._repairSearch=this.value;debounce('srep',()=>renderRepairsNew(document.getElementById('page-content')),250)"/>
-    <select onchange="window._repairFilter=this.value;renderRepairsNew(document.getElementById('page-content'))">
+    <select onchange="window._repairFilter=this.value;debounce('rflt',()=>renderRepairsNew(document.getElementById('page-content')),120)">
       <option value="">All statuses</option>
       ${Object.entries(STATUS_LABELS).map(([k,v])=>`<option value="${k}" ${statusFilter===k?'selected':''}>${v}</option>`).join('')}
     </select>
@@ -2941,7 +2969,7 @@ function renderInventory(c){
   <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap;align-items:center">
     <input placeholder="Search name or SKU…" value="${escH(window._invSearch||'')}"
       style="flex:1;min-width:180px" oninput="window._invSearch=this.value;debounce('sinv',()=>renderInventory(document.getElementById('page-content')),250)"/>
-    <select onchange="window._invCat=this.value;window._invSubcat='';renderInventory(document.getElementById('page-content'))" style="flex:0 0 160px">
+    <select onchange="window._invCat=this.value;window._invSubcat='';debounce('icat',()=>renderInventory(document.getElementById('page-content')),120)" style="flex:0 0 160px">
       <option value="">All categories</option>
       <option value="CASE" ${cat==='CASE'?'selected':''}>📱 Cases</option>
       <option value="CHARGER" ${cat==='CHARGER'?'selected':''}>🔌 Chargers</option>
@@ -2951,12 +2979,12 @@ function renderInventory(c){
       <option value="ACCESSORY" ${cat==='ACCESSORY'?'selected':''}>🎧 Accessories</option>
       <option value="PART" ${cat==='PART'?'selected':''}>🔧 Parts</option>
     </select>
-    <select onchange="window._invSubcat=this.value;renderInventory(document.getElementById('page-content'))" id="subcat-filter" style="flex:0 0 160px">
+    <select onchange="window._invSubcat=this.value;debounce('isub',()=>renderInventory(document.getElementById('page-content')),120)" id="subcat-filter" style="flex:0 0 160px">
       <option value="">All brands</option>
       ${Object.entries(CAT_SUBCATEGORIES).flatMap(([c,subs])=>subs).filter((v,i,a)=>a.indexOf(v)===i).sort().map(s=>`<option value="${escH(s)}" ${(window._invSubcat||'')===s?'selected':''}>${escH(s)}</option>`).join('')}
     </select>
     <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;color:var(--text2);white-space:nowrap;flex-shrink:0">
-      <input type="checkbox" ${lowOnly?'checked':''} onchange="window._invLow=this.checked;renderInventory(document.getElementById('page-content'))"/>
+      <input type="checkbox" ${lowOnly?'checked':''} onchange="window._invLow=this.checked;debounce('ilow',()=>renderInventory(document.getElementById('page-content')),80)"/>
       ⚠️ Low stock only
     </label>
   </div>
@@ -3653,6 +3681,69 @@ function renderReports(c){
     })()}
   </div>
 
+  <!-- ── End-of-Day Sales Summary ──────────────────────────── -->
+  <div class="card mt-3">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+      <div class="card-title" style="margin-bottom:0">📅 End-of-Day Sales Summary</div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <select id="eod-month-filter" onchange="debounce('eod',()=>renderEODSummary(),80)" style="font-size:12px;padding:5px 8px">
+          <option value="">All months</option>
+          ${[...new Set(invoices.filter(i=>i.date).map(i=>i.date.slice(0,7)))].sort().reverse()
+            .map(m=>{
+              const [yr,mo]=m.split('-');
+              const label=new Date(parseInt(yr),parseInt(mo)-1,1).toLocaleDateString('en-CA',{year:'numeric',month:'long'});
+              return `<option value="${m}">${label}</option>`;
+            }).join('')}
+        </select>
+        <button class="btn btn-secondary btn-sm" onclick="printEODReport()">🖨️ Print Report</button>
+      </div>
+    </div>
+    <div id="eod-summary-content"></div>
+  </div>
+
+  <!-- ── Full Invoice Register grouped by day ──────────────── -->
+  <div class="card mt-3">
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;flex-wrap:wrap;gap:8px">
+      <div class="card-title" style="margin-bottom:0">Invoice Register — All Transactions</div>
+      <span style="font-size:12px;color:var(--text2)">${invoices.filter(i=>i.type!=='STORE_CREDIT_ISSUED').length} total · ${fmt(invoices.filter(i=>i.type!=='REFUND'&&i.type!=='STORE_CREDIT_ISSUED').reduce((s,i)=>s+i.total,0))} all-time</span>
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+      <input id="rep-inv-search" placeholder="Search invoice #, customer, payment…"
+        style="flex:1;min-width:180px"
+        oninput="debounce('rep-inv-search',()=>{
+          const q=(document.getElementById('rep-inv-search')?.value||'').toLowerCase();
+          const rows=document.querySelectorAll('#rep-inv-tbody tr[data-search]');
+          rows.forEach(r=>r.style.display=r.dataset.search?.includes(q)?'':'none');
+        },200)"/>
+      <select id="rep-inv-month" onchange="filterRepInvByMonth()" style="width:auto;font-size:12px">
+        <option value="">All months</option>
+        ${[...new Set(invoices.map(i=>i.date?i.date.slice(0,7):'').filter(Boolean))].sort().reverse()
+          .map(m=>{
+            const [yr,mo]=m.split('-');
+            const label=new Date(parseInt(yr),parseInt(mo)-1,1).toLocaleDateString('en-CA',{year:'numeric',month:'long'});
+            return `<option value="${m}">${label}</option>`;
+          }).join('')}
+      </select>
+      <select id="rep-inv-view" onchange="debounce('rivw',()=>toggleInvView(),80)" style="width:auto;font-size:12px">
+        <option value="grouped">Grouped by Day</option>
+        <option value="flat">Flat List</option>
+      </select>
+    </div>
+    <div class="table-wrap" style="max-height:600px;overflow-y:auto">
+    <table>
+      <thead><tr>
+        <th>#</th><th>Invoice</th><th>Date</th><th>Customer</th>
+        <th>Items</th><th>Payment</th><th class="text-right">Subtotal</th>
+        <th class="text-right">Tax</th><th class="text-right">Total</th>
+        <th style="text-align:center">Actions</th>
+      </tr></thead>
+      <tbody id="rep-inv-tbody">
+      ${renderInvoiceRows(invoices, true)}
+      </tbody>
+    </table>
+    </div>
+  </div>
+
   <div class="card mt-3">
     <div class="card-title">Export Reports</div>
     <p style="font-size:12px;color:var(--text2);margin-bottom:12px">
@@ -3682,6 +3773,397 @@ function renderReports(c){
       </label>
     </div>
   </div>`;
+
+  // Render EOD summary after DOM is ready
+  requestAnimationFrame(()=>renderEODSummary());
+}
+
+// ── Render invoice rows (grouped by day or flat) ─────────────
+function renderInvoiceRows(invList, grouped=true){
+  const list = invList.filter(i=>i.type!=='STORE_CREDIT_ISSUED').slice().reverse();
+  if(!list.length) return `<tr><td colspan="10" style="text-align:center;padding:40px;color:var(--text3)">No invoices yet</td></tr>`;
+
+  if(!grouped){
+    return list.map((inv,idx)=>buildInvRow(inv, idx%2===0)).join('');
+  }
+
+  // Group by date
+  const byDay = {};
+  list.forEach(inv=>{
+    const d = inv.date||'unknown';
+    if(!byDay[d]) byDay[d]=[];
+    byDay[d].push(inv);
+  });
+
+  return Object.entries(byDay).map(([day,dayInvs])=>{
+    const dayTotal   = dayInvs.reduce((s,i)=>s+i.total,0);
+    const dayTax     = dayInvs.reduce((s,i)=>s+(i.totalTax||i.hst||0),0);
+    const daySub     = dayInvs.reduce((s,i)=>s+(i.subtotal||i.total),0);
+    const dayLabel   = day==='unknown'?'Unknown Date':
+      new Date(day+'T12:00:00').toLocaleDateString('en-CA',
+        {weekday:'long',year:'numeric',month:'long',day:'numeric'});
+
+    const rows = dayInvs.map((inv,idx)=>buildInvRow(inv, idx%2===0)).join('');
+
+    // Day header
+    const dayHdr = `<tr style="background:var(--surface2);border-top:2px solid var(--accent)">
+      <td colspan="10" style="padding:8px 14px">
+        <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:6px">
+          <span style="font-size:12px;font-weight:700;color:var(--text);letter-spacing:.2px">📅 ${escH(dayLabel)}</span>
+          <span style="font-size:11px;color:var(--text2)">${dayInvs.length} transaction${dayInvs.length!==1?'s':''}</span>
+        </div>
+      </td>
+    </tr>`;
+
+    // Day footer — end-of-day total
+    const dayFtr = `<tr style="background:var(--green-bg);border-bottom:2px solid var(--border)">
+      <td colspan="5" style="padding:8px 14px">
+        <span style="font-size:11px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:.5px">
+          End of Day — ${dayInvs.length} sale${dayInvs.length!==1?'s':''}
+        </span>
+      </td>
+      <td colspan="2" style="padding:8px 14px;text-align:right;font-size:12px;color:var(--text2)">
+        Subtotal: <strong>${fmt(daySub)}</strong>
+      </td>
+      <td style="padding:8px 14px;text-align:right;font-size:12px;color:var(--amber)">
+        Tax: <strong>${fmt(dayTax)}</strong>
+      </td>
+      <td style="padding:8px 14px;text-align:right">
+        <span style="font-size:14px;font-weight:800;color:var(--accent)">${fmt(dayTotal)}</span>
+      </td>
+      <td style="padding:8px 14px;text-align:center">
+        <button class="btn btn-secondary btn-sm" title="Print day summary"
+          onclick="printDaySummary('${day}')" style="font-size:10px">🖨️ Day</button>
+      </td>
+    </tr>`;
+
+    return dayHdr + rows + dayFtr;
+  }).join('');
+}
+
+// ── Single invoice row builder ───────────────────────────────
+function buildInvRow(inv, altBg=false){
+  const bg = altBg ? 'var(--surface2)' : 'var(--surface)';
+  const searchKey=[inv.number,inv.customerName||'',inv.payment||'',inv.date||''].join(' ').toLowerCase();
+  return `<tr data-search="${escH(searchKey)}" data-month="${(inv.date||'').slice(0,7)}" style="background:${bg}">
+    <td style="font-size:11px;color:var(--text3)">${inv.number?.split('-').pop()||''}</td>
+    <td class="font-mono text-accent" style="font-size:12px;font-weight:700">${escH(inv.number)}</td>
+    <td style="font-size:12px;color:var(--text2);white-space:nowrap">${fmtDate(inv.date)}</td>
+    <td style="font-weight:600;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escH(inv.customerName||'Walk-in')}</td>
+    <td style="font-size:12px;color:var(--text2)">${inv.lines?.length||0} item${(inv.lines?.length||0)!==1?'s':''}</td>
+    <td><span class="badge ${
+      inv.payment==='Cash'?'badge-green':
+      inv.payment==='E-Transfer'?'badge-amber':
+      inv.payment==='Credit Card'?'badge-blue':'badge-gray'}">${escH(inv.payment||'—')}</span></td>
+    <td class="text-right" style="font-size:12px">${fmt(inv.subtotal||inv.total)}</td>
+    <td class="text-right" style="font-size:12px;color:var(--amber)">${fmt(inv.totalTax||inv.hst||0)}</td>
+    <td class="text-right font-bold" style="color:var(--green)">${fmt(inv.total)}</td>
+    <td style="white-space:nowrap;text-align:center">
+      <button class="btn btn-primary btn-sm" title="Print invoice" style="padding:4px 10px"
+        onclick="printInvoice(invoices.find(x=>x.id==='${inv.id}'))">🖨️ Print</button>
+      <button class="btn btn-secondary btn-sm" style="margin-left:3px" title="Email receipt"
+        onclick="emailInvoice('${inv.id}')">📧</button>
+      ${inv.type!=='REFUND'?`<button class="btn btn-secondary btn-sm" style="margin-left:3px;color:var(--red);padding:4px 8px" title="Refund"
+        onclick="showPage('refunds');window._refundSearch='${inv.number}';renderRefunds(document.getElementById('page-content'))">↩</button>`:''}
+    </td>
+  </tr>`;
+}
+
+// ── Toggle grouped/flat view ──────────────────────────────────
+function toggleInvView(){
+  const sel = document.getElementById('rep-inv-view')?.value||'grouped';
+  const month = document.getElementById('rep-inv-month')?.value||'';
+  const list = month
+    ? invoices.filter(i=>i.date?.startsWith(month))
+    : invoices;
+  const tbody = document.getElementById('rep-inv-tbody');
+  if(tbody) tbody.innerHTML = renderInvoiceRows(list, sel==='grouped');
+}
+
+// ── EOD Summary renderer ──────────────────────────────────────
+function renderEODSummary(){
+  const el = document.getElementById('eod-summary-content');
+  if(!el) return;
+
+  const monthFilter = document.getElementById('eod-month-filter')?.value||'';
+  let list = invoices.filter(i=>i.type!=='REFUND'&&i.type!=='STORE_CREDIT_ISSUED');
+  if(monthFilter) list = list.filter(i=>i.date?.startsWith(monthFilter));
+
+  if(!list.length){
+    el.innerHTML='<p class="text-muted" style="font-size:13px">No sales data for the selected period.</p>';
+    return;
+  }
+
+  // Group by day
+  const byDay={};
+  list.forEach(inv=>{
+    const d=inv.date||'unknown';
+    if(!byDay[d]) byDay[d]={invs:[],total:0,tax:0,sub:0,byPay:{}};
+    byDay[d].invs.push(inv);
+    byDay[d].total += inv.total;
+    byDay[d].tax   += inv.totalTax||inv.hst||0;
+    byDay[d].sub   += inv.subtotal||inv.total;
+    const p=inv.payment||'Other';
+    byDay[d].byPay[p]=(byDay[d].byPay[p]||0)+inv.total;
+  });
+
+  const days = Object.keys(byDay).sort().reverse();
+  const grandTotal  = list.reduce((s,i)=>s+i.total,0);
+  const grandTax    = list.reduce((s,i)=>s+(i.totalTax||i.hst||0),0);
+  const grandTxns   = list.length;
+
+  el.innerHTML=`
+  <!-- Grand total banner -->
+  <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px">
+    <div style="background:var(--green-bg);border:1px solid rgba(15,139,95,.25);border-radius:10px;padding:14px;text-align:center">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--accent)">Period Revenue</div>
+      <div style="font-size:24px;font-weight:800;font-family:var(--mono);color:var(--accent);margin-top:4px">${fmt(grandTotal)}</div>
+      <div style="font-size:11px;color:var(--text2);margin-top:2px">${days.length} day${days.length!==1?'s':''} · ${grandTxns} transactions</div>
+    </div>
+    <div style="background:var(--amber-bg);border:1px solid rgba(184,134,11,.25);border-radius:10px;padding:14px;text-align:center">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--amber)">Tax Collected</div>
+      <div style="font-size:24px;font-weight:800;font-family:var(--mono);color:var(--amber);margin-top:4px">${fmt(grandTax)}</div>
+      <div style="font-size:11px;color:var(--text2);margin-top:2px">${CA_PROVINCES[settings.province]?.label||'Ontario HST 13%'}</div>
+    </div>
+    <div style="background:var(--surface2);border:1px solid var(--border2);border-radius:10px;padding:14px;text-align:center">
+      <div style="font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.5px;color:var(--text2)">Daily Average</div>
+      <div style="font-size:24px;font-weight:800;font-family:var(--mono);color:var(--text);margin-top:4px">${fmt(days.length?grandTotal/days.length:0)}</div>
+      <div style="font-size:11px;color:var(--text2);margin-top:2px">avg ${grandTxns&&days.length?(grandTxns/days.length).toFixed(1):0} txns/day</div>
+    </div>
+  </div>
+
+  <!-- Day-by-day breakdown table -->
+  <div class="table-wrap" style="max-height:400px;overflow-y:auto">
+  <table>
+    <thead><tr>
+      <th>Date</th><th>Day</th><th class="text-right">Transactions</th>
+      <th class="text-right">Subtotal</th><th class="text-right">Tax</th>
+      <th class="text-right">Total</th><th>Payment Split</th><th style="text-align:center">Actions</th>
+    </tr></thead>
+    <tbody>
+    ${days.map((day,idx)=>{
+      const d=byDay[day];
+      const bg=idx%2===0?'var(--surface2)':'var(--surface)';
+      const dayLabel=day==='unknown'?'Unknown':
+        new Date(day+'T12:00:00').toLocaleDateString('en-CA',{weekday:'short',month:'short',day:'numeric'});
+      const weekday=day==='unknown'?'':
+        new Date(day+'T12:00:00').toLocaleDateString('en-CA',{weekday:'long'});
+      const payBreak=Object.entries(d.byPay)
+        .sort((a,b)=>b[1]-a[1])
+        .map(([p,v])=>`<span style="font-size:10px;margin-right:6px"><span style="color:var(--text3)">${p}:</span> <strong>${fmt(v)}</strong></span>`)
+        .join('');
+      // Highlight today
+      const isToday=day===today();
+      return `<tr style="background:${isToday?'rgba(15,139,95,.06)':bg}${isToday?';outline:1px solid rgba(15,139,95,.3)':''}">
+        <td style="font-weight:700;white-space:nowrap;color:${isToday?'var(--accent)':'var(--text)'}">
+          ${isToday?'⭐ ':''}${escH(dayLabel)}
+        </td>
+        <td style="font-size:11px;color:var(--text2)">${weekday}</td>
+        <td class="text-right font-bold">${d.invs.length}</td>
+        <td class="text-right" style="font-size:12px">${fmt(d.sub)}</td>
+        <td class="text-right" style="font-size:12px;color:var(--amber)">${fmt(d.tax)}</td>
+        <td class="text-right font-bold" style="color:var(--accent)">${fmt(d.total)}</td>
+        <td style="font-size:11px">${payBreak}</td>
+        <td style="text-align:center;white-space:nowrap">
+          <button class="btn btn-secondary btn-sm" style="font-size:10px"
+            onclick="printDaySummary('${day}')">🖨️ Print Day</button>
+        </td>
+      </tr>`;
+    }).join('')}
+    </tbody>
+    <!-- Grand total row -->
+    <tfoot>
+      <tr style="background:var(--accent);color:#fff">
+        <td colspan="2" style="padding:10px 14px;font-weight:700;font-size:12px">PERIOD TOTAL</td>
+        <td class="text-right" style="padding:10px 14px;font-weight:700">${grandTxns}</td>
+        <td class="text-right" style="padding:10px 14px;font-size:12px">${fmt(list.reduce((s,i)=>s+(i.subtotal||i.total),0))}</td>
+        <td class="text-right" style="padding:10px 14px">${fmt(grandTax)}</td>
+        <td class="text-right" style="padding:10px 14px;font-size:16px;font-weight:800;font-family:var(--mono)">${fmt(grandTotal)}</td>
+        <td colspan="2"></td>
+      </tr>
+    </tfoot>
+  </table>
+  </div>`;
+}
+
+// ── Print full EOD report ──────────────────────────────────────
+function printEODReport(){
+  const monthFilter = document.getElementById('eod-month-filter')?.value||'';
+  let list = invoices.filter(i=>i.type!=='REFUND'&&i.type!=='STORE_CREDIT_ISSUED');
+  if(monthFilter) list = list.filter(i=>i.date?.startsWith(monthFilter));
+
+  const [yr,mo] = monthFilter ? monthFilter.split('-') : [new Date().getFullYear(), new Date().getMonth()+1];
+  const periodLabel = monthFilter
+    ? new Date(parseInt(yr),parseInt(mo)-1,1).toLocaleDateString('en-CA',{year:'numeric',month:'long'})
+    : 'All Time';
+
+  const byDay={};
+  list.forEach(inv=>{
+    const d=inv.date||'unknown';
+    if(!byDay[d]) byDay[d]={invs:[],total:0,tax:0,sub:0,byPay:{}};
+    byDay[d].invs.push(inv);
+    byDay[d].total+=inv.total;
+    byDay[d].tax+=inv.totalTax||inv.hst||0;
+    byDay[d].sub+=inv.subtotal||inv.total;
+    const p=inv.payment||'Other';
+    byDay[d].byPay[p]=(byDay[d].byPay[p]||0)+inv.total;
+  });
+
+  const days=Object.keys(byDay).sort();
+  const grandTotal=list.reduce((s,i)=>s+i.total,0);
+  const grandTax=list.reduce((s,i)=>s+(i.totalTax||i.hst||0),0);
+
+  const printWin=window.open('','_blank','width=800,height=900');
+  printWin.document.write(`<!DOCTYPE html><html><head>
+  <title>End-of-Day Report — ${escH(periodLabel)}</title>
+  <style>
+    body{font-family:'Calibri',Arial,sans-serif;color:#1a1d1a;background:#fff;padding:30px;font-size:12px}
+    h1{font-size:18px;color:#0d1410;margin-bottom:2px}
+    h2{font-size:12px;color:#6b716a;font-weight:400;margin-bottom:20px}
+    table{width:100%;border-collapse:collapse;margin-bottom:20px}
+    th{background:#0d1410;color:#fff;padding:8px 10px;text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.5px}
+    td{padding:7px 10px;border-bottom:1px solid #e6e8e3}
+    .text-right{text-align:right}
+    .day-hdr{background:#f0f5f1;font-weight:700;color:#0f8b5f;font-size:11px;text-transform:uppercase;letter-spacing:.4px;padding:6px 10px}
+    .day-total{background:#0f8b5f;color:#fff;font-weight:700}
+    .grand{background:#0d1410;color:#fff;font-size:14px;font-weight:800}
+    .inv-line{font-size:11px;color:#6b716a}
+    @media print{body{padding:10px}button{display:none}}
+  </style>
+  </head><body>
+  <h1>${escH(settings.shopName||'Tech-Pro+')} — End-of-Day Sales Report</h1>
+  <h2>${escH(periodLabel)} · GST/HST# ${escH(settings.shopGST||'—')} · Printed ${new Date().toLocaleString('en-CA')}</h2>
+  <table>
+    <thead><tr>
+      <th>Date</th><th>Invoice #</th><th>Customer</th>
+      <th>Payment</th><th class="text-right">Subtotal</th>
+      <th class="text-right">Tax</th><th class="text-right">Total</th>
+    </tr></thead>
+    <tbody>
+    ${days.map(day=>{
+      const d=byDay[day];
+      const dayLabel=new Date(day+'T12:00:00').toLocaleDateString('en-CA',
+        {weekday:'long',year:'numeric',month:'long',day:'numeric'});
+      const invRows=d.invs.map(inv=>`
+        <tr class="inv-line">
+          <td>${escH(fmtDate(inv.date))}</td>
+          <td>${escH(inv.number)}</td>
+          <td>${escH(inv.customerName||'Walk-in')}</td>
+          <td>${escH(inv.payment||'—')}</td>
+          <td class="text-right">${fmt(inv.subtotal||inv.total)}</td>
+          <td class="text-right">${fmt(inv.totalTax||inv.hst||0)}</td>
+          <td class="text-right">${fmt(inv.total)}</td>
+        </tr>`).join('');
+      return `<tr><td colspan="7" class="day-hdr">📅 ${escH(dayLabel)}</td></tr>
+        ${invRows}
+        <tr class="day-total">
+          <td colspan="4" style="padding:7px 10px;font-size:12px">
+            End of Day · ${d.invs.length} transaction${d.invs.length!==1?'s':''}
+            · ${Object.entries(d.byPay).map(([p,v])=>`${p}: ${fmt(v)}`).join(' · ')}
+          </td>
+          <td class="text-right" style="padding:7px 10px">${fmt(d.sub)}</td>
+          <td class="text-right" style="padding:7px 10px">${fmt(d.tax)}</td>
+          <td class="text-right" style="padding:7px 10px;font-size:14px">${fmt(d.total)}</td>
+        </tr>`;
+    }).join('')}
+    </tbody>
+    <tfoot>
+      <tr class="grand">
+        <td colspan="4" style="padding:10px">PERIOD TOTAL — ${list.length} transactions over ${days.length} days</td>
+        <td class="text-right" style="padding:10px">${fmt(list.reduce((s,i)=>s+(i.subtotal||i.total),0))}</td>
+        <td class="text-right" style="padding:10px">${fmt(grandTax)}</td>
+        <td class="text-right" style="padding:10px;font-size:16px">${fmt(grandTotal)}</td>
+      </tr>
+    </tfoot>
+  </table>
+  <script>window.onload=()=>window.print();<\/script>
+  </body></html>`);
+  printWin.document.close();
+}
+
+// ── Print single day summary ──────────────────────────────────
+function printDaySummary(day){
+  const dayInvs=invoices.filter(i=>i.date===day&&i.type!=='REFUND'&&i.type!=='STORE_CREDIT_ISSUED');
+  if(!dayInvs.length){ alert('No invoices found for '+day); return; }
+
+  const dayTotal=dayInvs.reduce((s,i)=>s+i.total,0);
+  const dayTax=dayInvs.reduce((s,i)=>s+(i.totalTax||i.hst||0),0);
+  const daySub=dayInvs.reduce((s,i)=>s+(i.subtotal||i.total),0);
+  const byPay={};
+  dayInvs.forEach(i=>{ byPay[i.payment||'Other']=(byPay[i.payment||'Other']||0)+i.total; });
+  const dayLabel=new Date(day+'T12:00:00').toLocaleDateString('en-CA',
+    {weekday:'long',year:'numeric',month:'long',day:'numeric'});
+
+  const printWin=window.open('','_blank','width=700,height:800');
+  printWin.document.write(`<!DOCTYPE html><html><head>
+  <title>Day Summary — ${escH(dayLabel)}</title>
+  <style>
+    body{font-family:'Calibri',Arial,sans-serif;color:#1a1d1a;background:#fdfcf9;padding:30px;font-size:12px}
+    .hdr{background:#0d1410;color:#fff;padding:18px 20px;border-radius:8px;margin-bottom:20px}
+    .hdr h1{font-size:16px;margin:0 0 4px}
+    .hdr p{font-size:11px;color:#b8964a;margin:0}
+    .kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px}
+    .kpi{background:#f0f5f1;border:1px solid #c8dece;border-radius:8px;padding:12px;text-align:center}
+    .kpi-label{font-size:10px;text-transform:uppercase;letter-spacing:.5px;color:#6b716a}
+    .kpi-val{font-size:20px;font-weight:800;color:#0f8b5f;margin-top:4px;font-family:monospace}
+    table{width:100%;border-collapse:collapse;margin-bottom:16px}
+    th{background:#0f8b5f;color:#fff;padding:7px 10px;text-align:left;font-size:10px;text-transform:uppercase;letter-spacing:.5px}
+    td{padding:7px 10px;border-bottom:1px solid #e6e8e3;font-size:11px}
+    .text-right{text-align:right}
+    .total-row{background:#0f8b5f;color:#fff;font-weight:700}
+    .pay-section{background:#f8f5ee;border-left:3px solid #b8964a;padding:10px 14px;border-radius:0 6px 6px 0;margin-bottom:16px}
+    .footer{text-align:center;font-size:10px;color:#a3a89e;margin-top:20px;padding-top:12px;border-top:1px dashed #d0c8b8}
+    @media print{body{padding:12px}}
+  </style>
+  </head><body>
+  <div class="hdr">
+    <h1>${escH(settings.shopName||'Tech-Pro+')} — End-of-Day Summary</h1>
+    <p>${escH(dayLabel)} · GST/HST# ${escH(settings.shopGST||'—')}</p>
+  </div>
+  <div class="kpis">
+    <div class="kpi"><div class="kpi-label">Total Revenue</div><div class="kpi-val">${fmt(dayTotal)}</div></div>
+    <div class="kpi"><div class="kpi-label">Transactions</div><div class="kpi-val">${dayInvs.length}</div></div>
+    <div class="kpi"><div class="kpi-label">Tax Collected</div><div class="kpi-val" style="color:#b8860b">${fmt(dayTax)}</div></div>
+  </div>
+  <div class="pay-section">
+    <strong style="font-size:11px;text-transform:uppercase;letter-spacing:.4px;color:#7a6a50">Payment Breakdown:</strong>
+    ${Object.entries(byPay).map(([p,v])=>`
+      <span style="margin-left:12px;font-size:12px"><strong>${escH(p)}:</strong> ${fmt(v)}</span>`).join('')}
+  </div>
+  <table>
+    <thead><tr>
+      <th>Invoice</th><th>Customer</th><th>Items</th>
+      <th>Payment</th><th class="text-right">Subtotal</th>
+      <th class="text-right">Tax</th><th class="text-right">Total</th>
+    </tr></thead>
+    <tbody>
+    ${dayInvs.map(inv=>`
+      <tr>
+        <td style="font-weight:700;color:#0f8b5f">${escH(inv.number)}</td>
+        <td>${escH(inv.customerName||'Walk-in')}</td>
+        <td>${inv.lines?.length||0} item${(inv.lines?.length||0)!==1?'s':''}</td>
+        <td>${escH(inv.payment||'—')}</td>
+        <td class="text-right">${fmt(inv.subtotal||inv.total)}</td>
+        <td class="text-right" style="color:#b8860b">${fmt(inv.totalTax||inv.hst||0)}</td>
+        <td class="text-right" style="font-weight:700">${fmt(inv.total)}</td>
+      </tr>`).join('')}
+    </tbody>
+    <tfoot>
+      <tr class="total-row">
+        <td colspan="4" style="padding:9px 10px">DAY TOTAL</td>
+        <td class="text-right" style="padding:9px 10px">${fmt(daySub)}</td>
+        <td class="text-right" style="padding:9px 10px">${fmt(dayTax)}</td>
+        <td class="text-right" style="padding:9px 10px;font-size:15px">${fmt(dayTotal)}</td>
+      </tr>
+    </tfoot>
+  </table>
+  <div class="footer">
+    Printed ${new Date().toLocaleString('en-CA')} · ${escH(settings.shopAddress||'')} · ${escH(settings.shopName||'Tech-Pro+')}
+    <br>🌿 This report is designed to be printed minimally — consider saving digitally where possible
+  </div>
+  <script>window.onload=()=>window.print();<\/script>
+  </body></html>`);
+  printWin.document.close();
 }
 
 // ══════════════════════════════════════════════════════════
@@ -4354,14 +4836,19 @@ function renderRefunds(c){
       oninput="window._refundSearch=this.value;debounce('sref',()=>renderRefunds(document.getElementById('page-content')),250)"/>
   </div>
   <div class="table-wrap mb-3">
-  <table><thead><tr><th>Invoice#</th><th>Customer</th><th>Date</th><th class="text-right">Total</th><th></th></tr></thead><tbody>
-  ${list.length===0?'<tr><td colspan="5" style="text-align:center;padding:30px;color:var(--text3)">No invoices found</td></tr>':
+  <table><thead><tr><th>Invoice#</th><th>Customer</th><th>Date</th><th class="text-right">Total</th><th>Payment</th><th></th></tr></thead><tbody>
+  ${list.length===0?'<tr><td colspan="6" style="text-align:center;padding:30px;color:var(--text3)">No invoices found</td></tr>':
   list.map(inv=>`<tr>
     <td class="font-mono text-accent" style="font-size:12px">${escH(inv.number)}</td>
     <td>${escH(inv.customerName||'Walk-in')}</td>
     <td style="font-size:12px;color:var(--text2)">${fmtDate(inv.date)}</td>
     <td class="text-right font-bold">${fmt(inv.total)}</td>
-    <td><button class="btn btn-secondary btn-sm" onclick="openRefundModal('${inv.id}')">Refund</button></td>
+    <td style="font-size:12px;color:var(--text2)">${escH(inv.payment||'')}</td>
+    <td style="white-space:nowrap;display:flex;gap:4px">
+      <button class="btn btn-secondary btn-sm" onclick="printInvoice(invoices.find(x=>x.id==='${inv.id}'))" title="Print invoice">🖨️ Print</button>
+      <button class="btn btn-secondary btn-sm" onclick="emailInvoice('${inv.id}')" title="Email receipt">📧</button>
+      <button class="btn btn-danger btn-sm" onclick="openRefundModal('${inv.id}')">↩ Refund</button>
+    </td>
   </tr>`).join('')}
   </tbody></table></div>
 
