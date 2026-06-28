@@ -4219,397 +4219,442 @@ async function generateMonthEndExcel(){
   const monthSel = document.getElementById('excel-month-sel');
   if(!monthSel){ alert('Select a month first'); return; }
 
-  const selectedMonth = monthSel.value; // YYYY-MM
+  const selectedMonth = monthSel.value;
   const [yr,mo] = selectedMonth.split('-');
   const monthLabel = new Date(parseInt(yr),parseInt(mo)-1,1)
     .toLocaleDateString('en-CA',{year:'numeric',month:'long'});
 
-  if(statusEl) statusEl.innerHTML='<div class="alert alert-blue" style="background:var(--accent-glow);border:1px solid rgba(15,139,95,.25);color:var(--accent);font-size:12px">⏳ Building Excel file…</div>';
+  if(statusEl) statusEl.innerHTML='<div class="alert alert-blue" style="background:var(--accent-glow);border:1px solid rgba(15,139,95,.25);color:var(--accent);font-size:12px">⏳ Loading Excel library…</div>';
 
-  // Load SheetJS from CDN
-  try {
-    await loadScript('https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js');
-  } catch(e){
-    if(statusEl) statusEl.innerHTML=`<div class="alert alert-red">Failed to load Excel library: ${e.message}</div>`;
-    return;
-  }
+  try{ await loadScript('https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js'); }
+  catch(e){ if(statusEl) statusEl.innerHTML=`<div class="alert alert-red">Failed to load library: ${e.message}</div>`; return; }
 
   const XLSX = window.XLSX;
-  if(!XLSX){ if(statusEl) statusEl.innerHTML='<div class="alert alert-red">Excel library not available</div>'; return; }
+  if(!XLSX){ if(statusEl) statusEl.innerHTML='<div class="alert alert-red">Excel library unavailable</div>'; return; }
 
-  // ── Filter invoices for selected month ────────────────────
+  if(statusEl) statusEl.innerHTML='<div class="alert alert-blue" style="background:var(--accent-glow);border:1px solid rgba(15,139,95,.25);color:var(--accent);font-size:12px">⏳ Building workbook…</div>';
+
+  // ── Filter invoices ────────────────────────────────────────
   const monthInvs = invoices.filter(i=>
-    i.date && i.date.startsWith(selectedMonth) &&
-    i.type !== 'REFUND' && i.type !== 'STORE_CREDIT_ISSUED'
+    i.date?.startsWith(selectedMonth) &&
+    i.type!=='REFUND' && i.type!=='STORE_CREDIT_ISSUED'
   ).sort((a,b)=>a.date.localeCompare(b.date));
 
-  if(monthInvs.length===0){
-    if(statusEl) statusEl.innerHTML='<div class="alert alert-amber">No invoices found for this month. Complete some sales first.</div>';
+  if(!monthInvs.length){
+    if(statusEl) statusEl.innerHTML='<div class="alert alert-amber">No invoices found for this month.</div>';
     return;
   }
 
-  // ── Derived totals ────────────────────────────────────────
-  const T_revenue  = monthInvs.reduce((s,i)=>s+i.total,0);
-  const T_sub      = monthInvs.reduce((s,i)=>s+(i.subtotal||0),0);
-  const T_disc     = monthInvs.reduce((s,i)=>s+(i.discount||0),0);
-  const T_hst      = monthInvs.reduce((s,i)=>s+(i.totalTax||i.hst||0),0);
-  const T_txns     = monthInvs.length;
-  const T_avg      = T_txns ? T_revenue/T_txns : 0;
+  // ── Aggregates ─────────────────────────────────────────────
+  const T_rev  = monthInvs.reduce((s,i)=>s+i.total,0);
+  const T_sub  = monthInvs.reduce((s,i)=>s+(i.subtotal||0),0);
+  const T_disc = monthInvs.reduce((s,i)=>s+(i.discount||0),0);
+  const T_tax  = monthInvs.reduce((s,i)=>s+(i.totalTax||i.hst||0),0);
+  const T_txns = monthInvs.length;
+  const T_avg  = T_txns ? T_rev/T_txns : 0;
 
   const byPay={}, byCat={}, byDay={}, byStaff={};
   monthInvs.forEach(inv=>{
     const pay=inv.payment||'Unknown';
-    byPay[pay]  = byPay[pay]  ||{rev:0,cnt:0}; byPay[pay].rev+=inv.total; byPay[pay].cnt++;
-    const cat=inv.lines?.[0]?_productIndex.get(inv.lines[0].productId)?.category||'Repair':'Repair';
-    byCat[cat]  = byCat[cat]  ||{rev:0,cnt:0}; byCat[cat].rev+=inv.total; byCat[cat].cnt++;
-    const d=inv.date||'';
-    byDay[d]    = byDay[d]    ||{rev:0,cnt:0}; byDay[d].rev+=inv.total; byDay[d].cnt++;
-    const st=inv.staffId?(staff.find(s=>s.id===inv.staffId)||{}).name||'Unknown':'Unknown';
-    byStaff[st] = byStaff[st]||{rev:0,cnt:0}; byStaff[st].rev+=inv.total; byStaff[st].cnt++;
+    byPay[pay]=(byPay[pay]||{rev:0,cnt:0});
+    byPay[pay].rev=round2(byPay[pay].rev+inv.total); byPay[pay].cnt++;
+
+    // Category from first line item
+    const cat=inv.lines?.[0]
+      ?(_productIndex.get(inv.lines[0].productId)?.category||'Repair Services')
+      :'Repair Services';
+    byCat[cat]=(byCat[cat]||{rev:0,cnt:0,tax:0});
+    byCat[cat].rev=round2(byCat[cat].rev+inv.total); byCat[cat].cnt++;
+    byCat[cat].tax=round2(byCat[cat].tax+(inv.totalTax||0));
+
+    byDay[inv.date]=(byDay[inv.date]||{rev:0,cnt:0,tax:0,sub:0});
+    byDay[inv.date].rev=round2(byDay[inv.date].rev+inv.total);
+    byDay[inv.date].cnt++; byDay[inv.date].tax=round2(byDay[inv.date].tax+(inv.totalTax||0));
+    byDay[inv.date].sub=round2(byDay[inv.date].sub+(inv.subtotal||inv.total));
+
+    const st=inv.staffId?(staff.find(s=>s.id===inv.staffId)||{name:'Unknown'}).name:'Unknown';
+    byStaff[st]=(byStaff[st]||{rev:0,cnt:0,disc:0});
+    byStaff[st].rev=round2(byStaff[st].rev+inv.total); byStaff[st].cnt++;
+    byStaff[st].disc=round2(byStaff[st].disc+(inv.discount||0));
   });
 
+  function round2(n){ return Math.round(n*100)/100; }
+
+  // ── SheetJS cell builders ──────────────────────────────────
+  const DARK='0D1410',EMERALD='0F8B5F',EMERALD2='0A6E49',GOLD='B8964A',
+        SAGE='F0F5F1',RED='C0392B',AMBER='B8860B',WHITE='FFFFFF',
+        MUTED='6B716A',PURPLE='6B5B95';
+
+  const FMT_MONEY='"CA$"#,##0.00';
+  const FMT_INT='#,##0';
+  const FMT_PCT='0.00%';
+  const FMT_DATE='DD-MMM-YYYY';
+
+  function brd(){ return {top:{style:'thin'},bottom:{style:'thin'},left:{style:'thin'},right:{style:'thin'}}; }
+  function fl(rgb){ return {fgColor:{rgb}}; }
+  function fnt(rgb,sz=10,bold=false,italic=false){ return {name:'Calibri',sz,bold,color:{rgb},italic}; }
+  function aln(h='left',v='center',wrap=false){ return {horizontal:h,vertical:v,wrapText:wrap}; }
+
+  // Title cell (for merged ranges — only top-left cell needs value+style)
+  function titleCell(text,bg=DARK,fg=WHITE,sz=16,bold=true,halign='center'){
+    return {v:text,t:'s',s:{font:fnt(fg,sz,bold),fill:fl(bg),alignment:aln(halign),border:brd()}};
+  }
+  // Header cell
+  function hdrCell(text,bg=DARK,fg=WHITE,halign='center'){
+    return {v:text,t:'s',s:{font:fnt(fg,10,true),fill:fl(bg),alignment:aln(halign,'center',true),border:brd()}};
+  }
+  // Data cells
+  function strCell(v,bold=false,color=null,bg=WHITE,halign='left'){
+    return {v:v||'',t:'s',s:{font:fnt(color||'1A1D1A',10,bold),fill:fl(bg),alignment:aln(halign),border:brd()}};
+  }
+  function numCell(v,fmt=FMT_INT,bold=false,color=null,bg=WHITE,halign='right'){
+    return {v:typeof v==='number'?v:parseFloat(v)||0,t:'n',
+            s:{font:fnt(color||'1A1D1A',10,bold),fill:fl(bg),
+               alignment:aln(halign),border:brd(),numFmt:fmt}};
+  }
+  function moneyCell(v,bold=false,color=null,bg=WHITE){
+    return numCell(round2(v),FMT_MONEY,bold,color||EMERALD,bg);
+  }
+  function pctCell(v,bg=WHITE){
+    return {v:typeof v==='number'?v:0,t:'n',
+            s:{font:fnt(MUTED,10),fill:fl(bg),alignment:aln('center'),border:brd(),numFmt:FMT_PCT}};
+  }
+  function totCell(v,fmt=FMT_MONEY,halign='right'){
+    return {v:round2(v),t:'n',s:{font:fnt(WHITE,11,true),fill:fl(EMERALD),
+            alignment:aln(halign),border:brd(),numFmt:fmt}};
+  }
+  function totStr(v){
+    return {v:v,t:'s',s:{font:fnt(WHITE,11,true),fill:fl(EMERALD),
+            alignment:aln('left'),border:brd()}};
+  }
+  function emptyTot(){
+    return {v:'',t:'s',s:{font:fnt(WHITE),fill:fl(EMERALD),border:brd()}};
+  }
+  function dateCell(v,bg=WHITE,bold=false){
+    if(!v) return strCell('',bold,null,bg,'center');
+    const d=new Date(v+'T12:00:00');
+    return {v:d,t:'d',s:{font:fnt('1A1D1A',10,bold),fill:fl(bg),
+            alignment:aln('center'),border:brd(),numFmt:FMT_DATE}};
+  }
+
+  // Helper: set worksheet column widths
+  function setCols(ws, widths){
+    ws['!cols'] = widths.map(w=>({wch:w}));
+  }
+  // Helper: set row heights
+  function setRows(ws, heights){
+    ws['!rows'] = heights.map(h=>h?{hpt:h}:null);
+  }
+
   const wb = XLSX.utils.book_new();
+  const shopName = settings.shopName||'Tech-Pro+';
+  const gst      = settings.shopGST||'—';
+  const addr     = settings.shopAddress||'';
+  const prov     = CA_PROVINCES[settings.province||'ON']?.label||'Ontario (ON)';
 
-  // ── PALETTE ───────────────────────────────────────────────
-  const DARK    = '0D1410';
-  const EMERALD = '0F8B5F';
-  const GOLD    = 'B8964A';
-  const LIGHT   = 'F0F5F1';
-  const RED     = 'C0392B';
-  const AMBER   = 'B8860B';
-  const WHITE   = 'FFFFFF';
-  const MUTED   = '6B716A';
+  // ════════════════════════════════════════════════════════════
+  // SHEET 1 — EXECUTIVE SUMMARY
+  // ════════════════════════════════════════════════════════════
+  const s1 = [];
 
-  const moneyFmt = '#,##0.00';
-  const numFmt   = '#,##0';
-  const pctFmt   = '0.0%';
+  // Row 1: Main title
+  s1.push([titleCell(`${shopName}  —  Month-End Sales Report  —  ${monthLabel}`,DARK,WHITE,16),...Array(7).fill({v:'',t:'s',s:{fill:fl(DARK),border:brd()}})]);
+  // Row 2: Sub-title
+  s1.push([titleCell(`${prov}   ·   GST/HST#: ${gst}   ·   ${addr}`,DARK,GOLD,10,false),...Array(7).fill({v:'',t:'s',s:{fill:fl(DARK),border:brd()}})]);
+  // Row 3: spacer
+  s1.push([{v:'',t:'s'}]);
+  // Row 4: KPI section header
+  s1.push([titleCell('KEY PERFORMANCE INDICATORS — AT A GLANCE',EMERALD,WHITE,11),...Array(7).fill({v:'',t:'s',s:{fill:fl(EMERALD),border:brd()}})]);
 
-  function hdrStyle(bg=DARK, fg=WHITE, size=11, bold=true, halign='center'){
-    return {font:{name:'Calibri',sz:size,bold,color:{rgb:fg}},
-            fill:{fgColor:{rgb:bg}},
-            alignment:{horizontal:halign,vertical:'center',wrapText:true},
-            border:{top:{style:'thin'},bottom:{style:'thin'},left:{style:'thin'},right:{style:'thin'}}};
-  }
-  function dataStyle(bold=false, halign='left', color=null, bg=null){
-    return {font:{name:'Calibri',sz:10,bold,color:{rgb:color||'1A1D1A'}},
-            fill:{fgColor:{rgb:bg||WHITE}},
-            alignment:{horizontal:halign,vertical:'center'},
-            border:{top:{style:'thin'},bottom:{style:'thin'},left:{style:'thin'},right:{style:'thin'}}};
-  }
-  function moneyStyle(bold=false,color=null,bg=null){
-    return {...dataStyle(bold,'right',color,bg),numFmt:moneyFmt};
-  }
-  function pctStyle(bg=null){
-    return {...dataStyle(false,'center',null,bg),numFmt:pctFmt};
-  }
-
-  // ══════════════════════════════════════════════════════════
-  // SHEET 1 — SUMMARY
-  // ══════════════════════════════════════════════════════════
-  const s1_data = [];
-
-  // Title rows
-  s1_data.push([{v:`${settings.shopName||'Tech-Pro+'} — Month-End Sales Report`,
-    s:hdrStyle(DARK,WHITE,16)},'','','','','','','']);
-  s1_data.push([{v:`${monthLabel}  ·  ${settings.shopAddress||''}  ·  GST/HST# ${settings.shopGST||'—'}`,
-    s:hdrStyle(DARK,GOLD,10,false)},'','','','','','','']);
-  s1_data.push([{v:''}]);
-
-  // KPI section header
-  s1_data.push([{v:'KEY PERFORMANCE INDICATORS',s:hdrStyle(EMERALD,WHITE,11)},'','','','','','','']);
-  s1_data.push([
-    {v:'TOTAL REVENUE',  s:hdrStyle(MUTED,WHITE,9)},  '',
-    {v:'TRANSACTIONS',   s:hdrStyle(MUTED,WHITE,9)},  '',
-    {v:'AVG TICKET',     s:hdrStyle(MUTED,WHITE,9)},  '',
-    {v:'HST COLLECTED',  s:hdrStyle(MUTED,WHITE,9)},  '',
+  // Row 5: KPI labels (A-B, C-D, E-F, G-H)
+  s1.push([
+    titleCell('TOTAL REVENUE',    MUTED,WHITE,8), {v:'',t:'s',s:{fill:fl(MUTED),border:brd()}},
+    titleCell('TRANSACTIONS',     MUTED,WHITE,8), {v:'',t:'s',s:{fill:fl(MUTED),border:brd()}},
+    titleCell('AVERAGE TICKET',   MUTED,WHITE,8), {v:'',t:'s',s:{fill:fl(MUTED),border:brd()}},
+    titleCell('TAX COLLECTED',    MUTED,WHITE,8), {v:'',t:'s',s:{fill:fl(MUTED),border:brd()}},
   ]);
-  s1_data.push([
-    {v:T_revenue,  s:{...moneyStyle(true,WHITE,EMERALD),font:{name:'Calibri',sz:18,bold:true,color:{rgb:WHITE}}}}, '',
-    {v:T_txns,     s:{...dataStyle(true,'center',WHITE,DARK),numFmt:numFmt}},  '',
-    {v:T_avg,      s:{...moneyStyle(true,WHITE,DARK)}},  '',
-    {v:T_hst,      s:{...moneyStyle(true,WHITE,AMBER)}},  '',
+  // Row 6: KPI values
+  s1.push([
+    {v:round2(T_rev),  t:'n',s:{font:fnt(WHITE,22,true),fill:fl(EMERALD), alignment:aln('center'),border:brd(),numFmt:FMT_MONEY}},
+    {v:'',t:'s',s:{fill:fl(EMERALD),border:brd()}},
+    {v:T_txns,         t:'n',s:{font:fnt(WHITE,22,true),fill:fl(DARK),    alignment:aln('center'),border:brd(),numFmt:FMT_INT}},
+    {v:'',t:'s',s:{fill:fl(DARK),border:brd()}},
+    {v:round2(T_avg),  t:'n',s:{font:fnt(WHITE,22,true),fill:fl(DARK),    alignment:aln('center'),border:brd(),numFmt:FMT_MONEY}},
+    {v:'',t:'s',s:{fill:fl(DARK),border:brd()}},
+    {v:round2(T_tax),  t:'n',s:{font:fnt(WHITE,22,true),fill:fl(AMBER),   alignment:aln('center'),border:brd(),numFmt:FMT_MONEY}},
+    {v:'',t:'s',s:{fill:fl(AMBER),border:brd()}},
   ]);
-  s1_data.push([{v:''}]);
+  // Row 7: second KPI labels
+  s1.push([
+    titleCell('TOTAL DISCOUNTS',      MUTED,WHITE,8), {v:'',t:'s',s:{fill:fl(MUTED),border:brd()}},
+    titleCell('NET SALES (ex-Tax)',   MUTED,WHITE,8), {v:'',t:'s',s:{fill:fl(MUTED),border:brd()}},
+    titleCell('DAYS TRADED',          MUTED,WHITE,8), {v:'',t:'s',s:{fill:fl(MUTED),border:brd()}},
+    titleCell('BEST DAY REVENUE',     MUTED,WHITE,8), {v:'',t:'s',s:{fill:fl(MUTED),border:brd()}},
+  ]);
+  const bestDay = Object.values(byDay).reduce((m,d)=>d.rev>m?d.rev:m,0);
+  // Row 8: second KPI values
+  s1.push([
+    {v:round2(T_disc),         t:'n',s:{font:fnt(WHITE,22,true),fill:fl(RED),    alignment:aln('center'),border:brd(),numFmt:FMT_MONEY}},
+    {v:'',t:'s',s:{fill:fl(RED),border:brd()}},
+    {v:round2(T_sub-T_disc),   t:'n',s:{font:fnt(WHITE,22,true),fill:fl(EMERALD2),alignment:aln('center'),border:brd(),numFmt:FMT_MONEY}},
+    {v:'',t:'s',s:{fill:fl(EMERALD2),border:brd()}},
+    {v:Object.keys(byDay).length, t:'n',s:{font:fnt(WHITE,22,true),fill:fl(PURPLE),alignment:aln('center'),border:brd(),numFmt:FMT_INT}},
+    {v:'',t:'s',s:{fill:fl(PURPLE),border:brd()}},
+    {v:round2(bestDay),        t:'n',s:{font:fnt(WHITE,22,true),fill:fl(DARK),    alignment:aln('center'),border:brd(),numFmt:FMT_MONEY}},
+    {v:'',t:'s',s:{fill:fl(DARK),border:brd()}},
+  ]);
+  s1.push([{v:'',t:'s'}]); // spacer row 9
 
-  // Payment breakdown
-  s1_data.push([{v:'PAYMENT METHOD BREAKDOWN',s:hdrStyle(DARK,WHITE,11)},'','','','','','','']);
-  s1_data.push([
-    {v:'Payment Method',s:hdrStyle()},
-    {v:'Revenue (CA$)', s:hdrStyle()},
-    {v:'Transactions',  s:hdrStyle()},
-    {v:'% of Total',    s:hdrStyle()},
-    {v:'REVENUE BY CATEGORY',s:hdrStyle(DARK)},
-    {v:'Revenue (CA$)',s:hdrStyle()},
-    {v:'Txns',         s:hdrStyle()},
-    {v:'% Share',      s:hdrStyle()},
+  // Row 10: Payment breakdown header
+  s1.push([
+    titleCell('PAYMENT METHOD BREAKDOWN',DARK,WHITE,11),
+    {v:'',t:'s',s:{fill:fl(DARK),border:brd()}},{v:'',t:'s',s:{fill:fl(DARK),border:brd()}},{v:'',t:'s',s:{fill:fl(DARK),border:brd()}},
+    titleCell('REVENUE BY CATEGORY',DARK,WHITE,11),
+    {v:'',t:'s',s:{fill:fl(DARK),border:brd()}},{v:'',t:'s',s:{fill:fl(DARK),border:brd()}},{v:'',t:'s',s:{fill:fl(DARK),border:brd()}},
+  ]);
+  // Row 11: Column headers for both tables
+  s1.push([
+    hdrCell('Payment Method','left'),hdrCell('Revenue (CA$)','right'),hdrCell('Sales','center'),hdrCell('% Share','center'),
+    hdrCell('Category','left'),hdrCell('Revenue (CA$)','right'),hdrCell('Sales','center'),hdrCell('% Share','center'),
   ]);
 
-  const payRows = Object.entries(byPay).sort((a,b)=>b[1].rev-a[1].rev);
-  const catRows = Object.entries(byCat).sort((a,b)=>b[1].rev-a[1].rev);
-  const maxRows = Math.max(payRows.length, catRows.length);
+  const payRows  = Object.entries(byPay).sort((a,b)=>b[1].rev-a[1].rev);
+  const catRows  = Object.entries(byCat).sort((a,b)=>b[1].rev-a[1].rev);
+  const maxRows  = Math.max(payRows.length, catRows.length);
 
   for(let i=0;i<maxRows;i++){
-    const bg = i%2===0 ? LIGHT : WHITE;
-    const [pm,pd] = payRows[i]||['',{rev:0,cnt:0}];
-    const [cm,cd] = catRows[i]||['',{rev:0,cnt:0}];
-    s1_data.push([
-      {v:pm||'',  s:dataStyle(true,'left',null,bg)},
-      {v:pd.rev||'', s:moneyStyle(true,EMERALD,bg)},
-      {v:pd.cnt||'', s:dataStyle(false,'center',null,bg)},
-      {v:T_revenue?pd.rev/T_revenue:0, s:pctStyle(bg)},
-      {v:cm||'',  s:dataStyle(false,'left',null,bg)},
-      {v:cd.rev||'', s:moneyStyle(true,EMERALD,bg)},
-      {v:cd.cnt||'', s:dataStyle(false,'center',null,bg)},
-      {v:T_revenue?cd.rev/T_revenue:0, s:pctStyle(bg)},
+    const bg = i%2===0 ? SAGE : WHITE;
+    const [pm,pd]=payRows[i]||['',{rev:0,cnt:0}];
+    const [cm,cd]=catRows[i]||['',{rev:0,cnt:0}];
+    s1.push([
+      strCell(pm,true,DARK,bg),     moneyCell(pd.rev,true,null,bg),
+      numCell(pd.cnt,FMT_INT,false,null,bg,'center'), pctCell(T_rev?pd.rev/T_rev:0,bg),
+      strCell(cm,false,null,bg),    moneyCell(cd.rev,true,null,bg),
+      numCell(cd.cnt,FMT_INT,false,null,bg,'center'), pctCell(T_rev?cd.rev/T_rev:0,bg),
     ]);
   }
 
   // Totals row
-  s1_data.push([
-    {v:'TOTAL', s:hdrStyle(EMERALD,WHITE,10,'left')},
-    {v:T_revenue, s:moneyStyle(true,WHITE,EMERALD)},
-    {v:T_txns,   s:dataStyle(true,'center',WHITE,EMERALD)},
-    {v:'100.0%', s:hdrStyle(EMERALD,WHITE,10)},
-    '','','',''
+  s1.push([
+    totStr('TOTAL'), totCell(T_rev), totCell(T_txns,FMT_INT,'center'), {v:'100.00%',t:'s',s:{font:fnt(WHITE,11,true),fill:fl(EMERALD),alignment:aln('center'),border:brd()}},
+    emptyTot(), emptyTot(), emptyTot(), emptyTot(),
   ]);
 
   // Footer
-  s1_data.push([{v:''}]);
-  s1_data.push([{v:`Generated by Tech-Pro+ CRM · ${settings.shopAddress||''} · ${new Date().toLocaleString('en-CA')}`,
-    s:{font:{name:'Calibri',sz:9,italic:true,color:{rgb:MUTED}},
-       alignment:{horizontal:'center'}}},'','','','','','','']);
+  const fr = s1.length+1;
+  s1.push([titleCell(`Generated ${new Date().toLocaleString('en-CA')}  ·  ${shopName}  ·  ${addr}`,'FDFCF9',MUTED,9,false),...Array(7).fill({v:'',t:'s',s:{fill:fl('FDFCF9'),border:brd()}})]);
 
-  const ws1 = XLSX.utils.aoa_to_sheet(s1_data);
-
-  // Merge title cells
+  const ws1 = XLSX.utils.aoa_to_sheet(s1);
   ws1['!merges']=[
     {s:{r:0,c:0},e:{r:0,c:7}},{s:{r:1,c:0},e:{r:1,c:7}},
     {s:{r:3,c:0},e:{r:3,c:7}},
-    {s:{r:5,c:0},e:{r:5,c:1}},{s:{r:5,c:2},e:{r:5,c:3}},
-    {s:{r:5,c:4},e:{r:5,c:5}},{s:{r:5,c:6},e:{r:5,c:7}},
-    {s:{r:6,c:0},e:{r:6,c:1}},{s:{r:6,c:2},e:{r:6,c:3}},
-    {s:{r:6,c:4},e:{r:6,c:5}},{s:{r:6,c:6},e:{r:6,c:7}},
-    {s:{r:7,c:0},e:{r:7,c:7}},
-    {s:{r:s1_data.length-1,c:0},e:{r:s1_data.length-1,c:7}},
+    {s:{r:4,c:0},e:{r:4,c:1}},{s:{r:4,c:2},e:{r:4,c:3}},{s:{r:4,c:4},e:{r:4,c:5}},{s:{r:4,c:6},e:{r:4,c:7}},
+    {s:{r:5,c:0},e:{r:5,c:1}},{s:{r:5,c:2},e:{r:5,c:3}},{s:{r:5,c:4},e:{r:5,c:5}},{s:{r:5,c:6},e:{r:5,c:7}},
+    {s:{r:6,c:0},e:{r:6,c:1}},{s:{r:6,c:2},e:{r:6,c:3}},{s:{r:6,c:4},e:{r:6,c:5}},{s:{r:6,c:6},e:{r:6,c:7}},
+    {s:{r:7,c:0},e:{r:7,c:1}},{s:{r:7,c:2},e:{r:7,c:3}},{s:{r:7,c:4},e:{r:7,c:5}},{s:{r:7,c:6},e:{r:7,c:7}},
+    {s:{r:9,c:0},e:{r:9,c:3}},{s:{r:9,c:4},e:{r:9,c:7}},
+    {s:{r:s1.length-1,c:0},e:{r:s1.length-1,c:7}},
   ];
-  ws1['!cols']=[{wch:22},{wch:16},{wch:14},{wch:12},{wch:22},{wch:16},{wch:10},{wch:12}];
-  ws1['!rows']=[{hpt:36},{hpt:20},{hpt:8},{hpt:20},{hpt:14},{hpt:32}];
-  XLSX.utils.book_append_sheet(wb, ws1, 'Summary');
+  setCols(ws1,[22,16,14,12,22,16,12,12]);
+  XLSX.utils.book_append_sheet(wb, ws1, 'Executive Summary');
 
-  // ══════════════════════════════════════════════════════════
+  // ════════════════════════════════════════════════════════════
   // SHEET 2 — INVOICE REGISTER
-  // ══════════════════════════════════════════════════════════
-  const s2_data = [];
-  s2_data.push([{v:`Invoice Register — ${monthLabel}`,s:hdrStyle(DARK,WHITE,14)},'','','','','','','','','','','','']);
-  s2_data.push([{v:`${settings.shopName||'Tech-Pro+'}  ·  ${T_txns} transactions  ·  CA$${T_revenue.toFixed(2)}`,
-    s:hdrStyle(DARK,GOLD,10,false)},'','','','','','','','','','','','']);
-  s2_data.push([{v:''}]);
+  // ════════════════════════════════════════════════════════════
+  const s2=[];
+  s2.push([titleCell(`Invoice Register  —  ${monthLabel}  —  ${shopName}`,DARK,WHITE,14),...Array(11).fill({v:'',t:'s',s:{fill:fl(DARK),border:brd()}})]);
+  s2.push([titleCell(`${T_txns} transactions   ·   Gross Revenue: CA$${T_rev.toFixed(2)}   ·   Tax: CA$${T_tax.toFixed(2)}`,DARK,GOLD,10,false),...Array(11).fill({v:'',t:'s',s:{fill:fl(DARK),border:brd()}})]);
+  s2.push([{v:'',t:'s'}]);
 
-  const REG_HDRS = ['#','Invoice No.','Date','Customer','Phone',
-    'Category','Payment','Subtotal','Discount','Taxable','Tax','TOTAL'];
-  s2_data.push(REG_HDRS.map(h=>({v:h,s:hdrStyle()})));
+  const regHdrs=['#','Invoice No.','Date','Customer Name','Category',
+    'Payment Method','Subtotal (CA$)','Discount (CA$)','Taxable (CA$)','HST 13% (CA$)','TOTAL (CA$)','Staff Member'];
+  const regAligns=['center','left','center','left','left','center','right','right','right','right','right','left'];
+  s2.push(regHdrs.map((h,i)=>hdrCell(h,DARK,WHITE,regAligns[i])));
 
+  const PAY_CLR={'Cash':EMERALD2,'Debit':EMERALD,'Credit Card':PURPLE,'E-Transfer':AMBER};
   monthInvs.forEach((inv,idx)=>{
-    const bg = idx%2===0 ? LIGHT : WHITE;
-    const cat = inv.lines?.[0]
-      ? (_productIndex.get(inv.lines[0].productId)?.category||'Repair')
-      : 'Repair';
-    s2_data.push([
-      {v:idx+1,           s:dataStyle(false,'center',MUTED,bg)},
-      {v:inv.number||'',  s:dataStyle(true,'left',EMERALD,bg)},
-      {v:fmtDate(inv.date),s:dataStyle(false,'center',null,bg)},
-      {v:inv.customerName||'Walk-in',s:dataStyle(false,'left',null,bg)},
-      {v:inv.customerPhone||'',s:dataStyle(false,'left',MUTED,bg)},
-      {v:cat,             s:dataStyle(false,'left',null,bg)},
-      {v:inv.payment||'', s:dataStyle(false,'center',null,bg)},
-      {v:inv.subtotal||0, s:moneyStyle(false,null,bg)},
-      {v:inv.discount||0, s:{...moneyStyle(false,inv.discount?RED:MUTED,bg)}},
-      {v:(inv.subtotal||0)-(inv.discount||0), s:moneyStyle(false,null,bg)},
-      {v:inv.totalTax||inv.hst||0, s:moneyStyle(false,AMBER,bg)},
-      {v:inv.total||0,    s:moneyStyle(true,EMERALD,bg)},
+    const bg=idx%2===0?SAGE:WHITE;
+    const cat=inv.lines?.[0]?(_productIndex.get(inv.lines[0].productId)?.category||'Repair Services'):'Repair Services';
+    const st=inv.staffId?(staff.find(s=>s.id===inv.staffId)||{name:'Unknown'}).name:'Unknown';
+    s2.push([
+      numCell(idx+1,FMT_INT,false,MUTED,bg,'center'),
+      strCell(inv.number,true,EMERALD,bg),
+      dateCell(inv.date,bg),
+      strCell(inv.customerName||'Walk-in',true,null,bg),
+      strCell(cat,false,null,bg),
+      strCell(inv.payment||'—',true,PAY_CLR[inv.payment]||null,bg,'center'),
+      moneyCell(inv.subtotal||inv.total,false,null,bg),
+      moneyCell(inv.discount||0,false,inv.discount?RED:MUTED,bg),
+      moneyCell((inv.subtotal||inv.total)-(inv.discount||0),false,null,bg),
+      moneyCell(inv.totalTax||inv.hst||0,false,AMBER,bg),
+      moneyCell(inv.total,true,EMERALD,bg),
+      strCell(st,false,MUTED,bg),
     ]);
   });
 
-  // Totals row
-  s2_data.push([
-    {v:'',s:hdrStyle(EMERALD)},{v:'',s:hdrStyle(EMERALD)},{v:'',s:hdrStyle(EMERALD)},
-    {v:'',s:hdrStyle(EMERALD)},{v:'',s:hdrStyle(EMERALD)},{v:'',s:hdrStyle(EMERALD)},
-    {v:'TOTALS',s:hdrStyle(EMERALD)},
-    {v:T_sub,  s:{...moneyStyle(true,WHITE,EMERALD)}},
-    {v:T_disc, s:{...moneyStyle(true,WHITE,EMERALD)}},
-    {v:T_sub-T_disc,s:{...moneyStyle(true,WHITE,EMERALD)}},
-    {v:T_hst,  s:{...moneyStyle(true,WHITE,EMERALD)}},
-    {v:T_revenue,s:{...moneyStyle(true,WHITE,EMERALD)}},
+  // Totals
+  s2.push([
+    emptyTot(),emptyTot(),emptyTot(),emptyTot(),emptyTot(),totStr('MONTHLY TOTALS'),
+    totCell(T_sub),totCell(T_disc),totCell(T_sub-T_disc),totCell(T_tax),totCell(T_rev),emptyTot()
   ]);
 
-  const ws2 = XLSX.utils.aoa_to_sheet(s2_data);
-  ws2['!merges']=[
-    {s:{r:0,c:0},e:{r:0,c:11}},
-    {s:{r:1,c:0},e:{r:1,c:11}},
-  ];
-  ws2['!cols']=[{wch:5},{wch:16},{wch:14},{wch:22},{wch:15},{wch:18},{wch:14},{wch:13},{wch:12},{wch:13},{wch:11},{wch:14}];
+  const ws2=XLSX.utils.aoa_to_sheet(s2);
+  ws2['!merges']=[{s:{r:0,c:0},e:{r:0,c:11}},{s:{r:1,c:0},e:{r:1,c:11}}];
+  setCols(ws2,[5,16,14,22,20,16,14,13,15,13,14,18]);
   ws2['!freeze']={xSplit:0,ySplit:4};
-  ws2['!autofilter']={ref:`A4:L4`};
+  ws2['!autofilter']={ref:'A4:L4'};
   XLSX.utils.book_append_sheet(wb, ws2, 'Invoice Register');
 
-  // ══════════════════════════════════════════════════════════
+  // ════════════════════════════════════════════════════════════
   // SHEET 3 — DAILY SALES
-  // ══════════════════════════════════════════════════════════
-  const s3_data=[];
-  s3_data.push([{v:`Daily Sales — ${monthLabel}`,s:hdrStyle(DARK,WHITE,14)},'','','','','','']);
-  s3_data.push([{v:''}]);
+  // ════════════════════════════════════════════════════════════
+  const s3=[];
+  s3.push([titleCell(`Daily Sales Breakdown  —  ${monthLabel}`,DARK,WHITE,14),...Array(6).fill({v:'',t:'s',s:{fill:fl(DARK),border:brd()}})]);
+  const dailyAvg=Object.keys(byDay).length?T_rev/Object.keys(byDay).length:0;
+  s3.push([titleCell(`${Object.keys(byDay).length} trading days   ·   Daily average: CA$${dailyAvg.toFixed(2)}`,DARK,GOLD,10,false),...Array(6).fill({v:'',t:'s',s:{fill:fl(DARK),border:brd()}})]);
+  s3.push([{v:'',t:'s'}]);
 
-  const DAY_HDRS=['Date','Weekday','Revenue (CA$)','Transactions','Avg Ticket','Cumulative'];
-  s3_data.push(DAY_HDRS.map(h=>({v:h,s:hdrStyle()})));
+  const dayHdrs=['Date','Weekday','Revenue (CA$)','Transactions','Avg Ticket (CA$)','vs Daily Avg','Cumulative (CA$)'];
+  const dayAligns=['left','left','right','center','right','right','right'];
+  s3.push(dayHdrs.map((h,i)=>hdrCell(h,DARK,WHITE,dayAligns[i])));
 
-  const days=Object.keys(byDay).sort();
-  let cumulative=0;
-  days.forEach((d,idx)=>{
-    const dd=byDay[d];
-    const bg=idx%2===0?LIGHT:WHITE;
+  const daysSorted=Object.keys(byDay).sort();
+  let cum=0;
+  daysSorted.forEach((d,idx)=>{
+    const dd=byDay[d]; const bg=idx%2===0?SAGE:WHITE;
+    const avg=round2(dd.rev/dd.cnt);
+    cum=round2(cum+dd.rev);
+    const vs=round2(dd.rev-dailyAvg);
     const dateObj=new Date(d+'T12:00:00');
-    cumulative+=dd.rev;
-    s3_data.push([
-      {v:new Date(d+'T12:00:00').toLocaleDateString('en-CA',{month:'short',day:'numeric',year:'numeric'}),
-        s:dataStyle(false,'left',null,bg)},
-      {v:dateObj.toLocaleDateString('en-CA',{weekday:'long'}), s:dataStyle(false,'left',MUTED,bg)},
-      {v:dd.rev,  s:moneyStyle(true,EMERALD,bg)},
-      {v:dd.cnt,  s:dataStyle(false,'center',null,bg)},
-      {v:dd.cnt?dd.rev/dd.cnt:0, s:moneyStyle(false,null,bg)},
-      {v:cumulative, s:moneyStyle(false,DARK,bg)},
+    const weekday=dateObj.toLocaleDateString('en-CA',{weekday:'long'});
+    s3.push([
+      dateCell(d,bg,true),
+      strCell(weekday,false,MUTED,bg),
+      moneyCell(dd.rev,true,null,bg),
+      numCell(dd.cnt,FMT_INT,false,null,bg,'center'),
+      moneyCell(avg,false,null,bg),
+      {v:vs,t:'n',s:{font:fnt(vs>=0?EMERALD:RED,10,true),fill:fl(bg),
+                     alignment:aln('right'),border:brd(),
+                     numFmt:'"CA$"#,##0.00;[Red]-"CA$"#,##0.00'}},
+      moneyCell(cum,false,'1A1D1A',bg),
     ]);
   });
 
-  // Total + avg rows
-  const dailyAvg=days.length?T_revenue/days.length:0;
-  s3_data.push([
-    {v:'MONTHLY TOTAL',s:hdrStyle(EMERALD,WHITE,10,'left')},
-    {v:'',s:hdrStyle(EMERALD)},
-    {v:T_revenue,s:moneyStyle(true,WHITE,EMERALD)},
-    {v:T_txns,   s:dataStyle(true,'center',WHITE,EMERALD)},
-    {v:T_avg,    s:moneyStyle(true,WHITE,EMERALD)},
-    {v:T_revenue,s:moneyStyle(true,WHITE,EMERALD)},
+  // Totals + avg rows
+  s3.push([
+    totStr('MONTHLY TOTAL'),emptyTot(),totCell(T_rev),totCell(T_txns,FMT_INT,'center'),
+    totCell(round2(T_avg)),emptyTot(),totCell(T_rev),
   ]);
-  s3_data.push([
-    {v:'Daily Average',s:dataStyle(false,'left',MUTED,LIGHT)},
-    {v:'',s:dataStyle(false,'left',null,LIGHT)},
-    {v:dailyAvg,s:moneyStyle(false,MUTED,LIGHT)},
-    {v:T_txns/days.length,s:{...dataStyle(false,'center',null,LIGHT),numFmt:'0.0'}},
-    {v:'',s:dataStyle(false,'left',null,LIGHT)},
-    {v:'',s:dataStyle(false,'left',null,LIGHT)},
+  s3.push([
+    strCell('Daily Average',false,MUTED,SAGE,'left'),
+    strCell('',false,MUTED,SAGE),
+    {v:round2(dailyAvg),t:'n',s:{font:fnt(MUTED,10,false,true),fill:fl(SAGE),alignment:aln('right'),border:brd(),numFmt:FMT_MONEY}},
+    {v:round2(T_txns/daysSorted.length),t:'n',s:{font:fnt(MUTED,10,false,true),fill:fl(SAGE),alignment:aln('center'),border:brd(),numFmt:'"~"#,##0.0'}},
+    {v:round2(T_avg),t:'n',s:{font:fnt(MUTED,10,false,true),fill:fl(SAGE),alignment:aln('right'),border:brd(),numFmt:FMT_MONEY}},
+    strCell('',false,MUTED,SAGE),strCell('',false,MUTED,SAGE),
   ]);
 
-  const ws3=XLSX.utils.aoa_to_sheet(s3_data);
-  ws3['!merges']=[{s:{r:0,c:0},e:{r:0,c:5}}];
-  ws3['!cols']=[{wch:18},{wch:14},{wch:17},{wch:15},{wch:17},{wch:18}];
-  ws3['!freeze']={xSplit:0,ySplit:3};
+  const ws3=XLSX.utils.aoa_to_sheet(s3);
+  ws3['!merges']=[{s:{r:0,c:0},e:{r:0,c:6}},{s:{r:1,c:0},e:{r:1,c:6}}];
+  setCols(ws3,[16,14,17,15,18,20,18]);
+  ws3['!freeze']={xSplit:0,ySplit:4};
   XLSX.utils.book_append_sheet(wb, ws3, 'Daily Sales');
 
-  // ══════════════════════════════════════════════════════════
+  // ════════════════════════════════════════════════════════════
   // SHEET 4 — CRA TAX REPORT
-  // ══════════════════════════════════════════════════════════
-  const s4_data=[];
-  s4_data.push([{v:'GST/HST Tax Report — Canada Revenue Agency',s:hdrStyle(RED,WHITE,14)},'','','','','']);
-  s4_data.push([{v:`${settings.shopName||'Tech-Pro+'}  ·  GST/HST# ${settings.shopGST||'—'}  ·  ${monthLabel}`,
-    s:hdrStyle(DARK,GOLD,10,false)},'','','','','']);
-  s4_data.push([{v:''}]);
+  // ════════════════════════════════════════════════════════════
+  const s4=[];
+  s4.push([titleCell('GST / HST Tax Report — Canada Revenue Agency',RED,WHITE,14),...Array(4).fill({v:'',t:'s',s:{fill:fl(RED),border:brd()}})]);
+  s4.push([titleCell(`${shopName}   ·   GST/HST# ${gst}   ·   Filing Period: ${monthLabel}`,DARK,GOLD,10,false),...Array(4).fill({v:'',t:'s',s:{fill:fl(DARK),border:brd()}})]);
+  s4.push([{v:'',t:'s'}]);
 
   const craLines=[
-    ['Line 101','Total Sales & Other Revenue',T_sub],
-    ['Line 103','HST Collected or Collectible',T_hst],
-    ['Line 105','Total Tax and Adjustments for Period',T_hst],
-    ['Line 106','Input Tax Credits (ITCs) — enter from records','← Enter'],
-    ['Line 109','Net Tax Remittable (Line 105 − 106)','Calculate'],
+    ['Line 101','Total Sales & Other Revenue',          T_sub,   EMERALD],
+    ['Line 103','GST/HST Collected or Collectible',     T_tax,   EMERALD],
+    ['Line 105','Total GST/HST & Adjustments',          T_tax,   EMERALD],
+    ['Line 106','Input Tax Credits (ITCs) — enter manually', null, AMBER],
+    ['Line 109','Net Tax Remittable (Line 105 − 106)',  null,    RED],
   ];
-  craLines.forEach(([line,desc,val],idx)=>{
-    const bg=idx%2===0?LIGHT:WHITE;
-    s4_data.push([
-      {v:line,s:hdrStyle(DARK,WHITE,10)},
-      {v:desc,s:dataStyle(false,'left',null,bg)},
-      {v:'',  s:dataStyle(false,'left',null,bg)},
-      {v:'',  s:dataStyle(false,'left',null,bg)},
-      {v:typeof val==='number'?val:val,
-       s:typeof val==='number'?moneyStyle(true,EMERALD,bg):dataStyle(true,'center',AMBER,bg)},
-      {v:'',  s:dataStyle(false,'left',null,bg)},
+  craLines.forEach(([line,desc,val,col],idx)=>{
+    const bg=idx%2===0?SAGE:WHITE;
+    const valCell = val!==null
+      ? {v:round2(val),t:'n',s:{font:fnt(col,13,true),fill:fl(bg),alignment:aln('center'),border:brd(),numFmt:FMT_MONEY}}
+      : {v:'← Enter from your records',t:'s',s:{font:fnt(AMBER,10,false,true),fill:fl(bg),alignment:aln('center'),border:brd()}};
+    s4.push([
+      {v:line,t:'s',s:{font:fnt(WHITE,11,true),fill:fl(DARK),alignment:aln('center'),border:brd()}},
+      {v:desc,t:'s',s:{font:fnt('1A1D1A',11),fill:fl(bg),alignment:aln('left'),border:brd()}},
+      {v:'',t:'s',s:{fill:fl(bg),border:brd()}},
+      {v:'',t:'s',s:{fill:fl(bg),border:brd()}},
+      valCell,
     ]);
   });
 
-  s4_data.push([{v:''}]);
-  s4_data.push([{v:'MONTHLY TAX DETAIL',s:hdrStyle(EMERALD,WHITE,11)},'','','','','']);
-  s4_data.push([
-    {v:'Period',s:hdrStyle()},{v:'Gross Sales',s:hdrStyle()},{v:'Discounts',s:hdrStyle()},
-    {v:'Net Taxable',s:hdrStyle()},{v:'HST 13%',s:hdrStyle()},{v:'HST Rate',s:hdrStyle()}
-  ]);
-  s4_data.push([
-    {v:monthLabel, s:dataStyle(false,'left',null,LIGHT)},
-    {v:T_sub,      s:moneyStyle(false,null,LIGHT)},
-    {v:T_disc,     s:moneyStyle(false,null,LIGHT)},
-    {v:T_sub-T_disc,s:moneyStyle(false,null,LIGHT)},
-    {v:T_hst,      s:moneyStyle(true,EMERALD,LIGHT)},
-    {v:0.13,       s:pctStyle(LIGHT)},
+  s4.push([{v:'',t:'s'}]);
+  s4.push([titleCell('MONTHLY CALCULATION DETAIL',EMERALD,WHITE,11),...Array(4).fill({v:'',t:'s',s:{fill:fl(EMERALD),border:brd()}})]);
+  const detHdrs=['Period','Gross Sales (CA$)','Discounts (CA$)','Net Taxable (CA$)','HST 13% (CA$)'];
+  s4.push(detHdrs.map(h=>hdrCell(h,DARK)));
+  s4.push([
+    strCell(monthLabel,false,null,SAGE,'left'),
+    moneyCell(T_sub,false,null,SAGE),
+    moneyCell(T_disc,false,T_disc?RED:MUTED,SAGE),
+    moneyCell(T_sub-T_disc,false,null,SAGE),
+    moneyCell(T_tax,true,EMERALD,SAGE),
   ]);
 
-  const ws4=XLSX.utils.aoa_to_sheet(s4_data);
+  const ws4=XLSX.utils.aoa_to_sheet(s4);
   ws4['!merges']=[
-    {s:{r:0,c:0},e:{r:0,c:5}},{s:{r:1,c:0},e:{r:1,c:5}},
-    {s:{r:7,c:0},e:{r:7,c:5}},
-    // CRA lines: col B-D merged for description
+    {s:{r:0,c:0},e:{r:0,c:4}},{s:{r:1,c:0},e:{r:1,c:4}},
     ...craLines.map((_,i)=>({s:{r:3+i,c:1},e:{r:3+i,c:3}})),
-    ...craLines.map((_,i)=>({s:{r:3+i,c:4},e:{r:3+i,c:5}})),
+    {s:{r:9,c:0},e:{r:9,c:4}},
   ];
-  ws4['!cols']=[{wch:12},{wch:30},{wch:12},{wch:12},{wch:16},{wch:12}];
+  setCols(ws4,[12,28,15,15,18]);
   XLSX.utils.book_append_sheet(wb, ws4, 'Tax Report (CRA)');
 
-  // ══════════════════════════════════════════════════════════
+  // ════════════════════════════════════════════════════════════
   // SHEET 5 — STAFF PERFORMANCE
-  // ══════════════════════════════════════════════════════════
-  const s5_data=[];
-  s5_data.push([{v:`Staff Performance — ${monthLabel}`,s:hdrStyle(DARK,WHITE,14)},'','','','','']);
-  s5_data.push([{v:''}]);
-  s5_data.push([
-    {v:'Staff Member',s:hdrStyle()},{v:'Transactions',s:hdrStyle()},
-    {v:'Revenue (CA$)',s:hdrStyle()},{v:'Avg Ticket',s:hdrStyle()},
-    {v:'% of Revenue',s:hdrStyle()},{v:'',s:hdrStyle()},
-  ]);
+  // ════════════════════════════════════════════════════════════
+  const s5=[];
+  s5.push([titleCell(`Staff Performance Report  —  ${monthLabel}`,DARK,WHITE,14),...Array(5).fill({v:'',t:'s',s:{fill:fl(DARK),border:brd()}})]);
+  s5.push([titleCell(`${Object.keys(byStaff).length} staff members   ·   Total: CA$${T_rev.toFixed(2)}`,DARK,GOLD,10,false),...Array(5).fill({v:'',t:'s',s:{fill:fl(DARK),border:brd()}})]);
+  s5.push([{v:'',t:'s'}]);
+
+  const stfHdrs=['Staff Member','Transactions','Revenue (CA$)','Avg Ticket (CA$)','Discounts Given','% of Revenue'];
+  const stfAligns=['left','center','right','right','right','center'];
+  s5.push(stfHdrs.map((h,i)=>hdrCell(h,DARK,WHITE,stfAligns[i])));
 
   const staffSorted=Object.entries(byStaff).sort((a,b)=>b[1].rev-a[1].rev);
   staffSorted.forEach(([name,d],idx)=>{
-    const bg=idx%2===0?LIGHT:WHITE;
-    const avg=d.cnt?d.rev/d.cnt:0;
-    s5_data.push([
-      {v:name,        s:dataStyle(true,'left',null,bg)},
-      {v:d.cnt,       s:dataStyle(false,'center',null,bg)},
-      {v:d.rev,       s:moneyStyle(true,EMERALD,bg)},
-      {v:avg,         s:moneyStyle(false,null,bg)},
-      {v:T_revenue?d.rev/T_revenue:0, s:pctStyle(bg)},
-      {v:'',          s:dataStyle(false,'left',null,bg)},
+    const bg=idx%2===0?SAGE:WHITE;
+    const avg=round2(d.rev/d.cnt);
+    s5.push([
+      strCell(name,true,DARK,bg),
+      numCell(d.cnt,FMT_INT,false,null,bg,'center'),
+      moneyCell(d.rev,true,null,bg),
+      moneyCell(avg,false,null,bg),
+      moneyCell(d.disc,false,d.disc?RED:MUTED,bg),
+      pctCell(T_rev?d.rev/T_rev:0,bg),
     ]);
   });
 
-  // Total row
-  s5_data.push([
-    {v:'TOTAL',   s:hdrStyle(EMERALD,WHITE,10,'left')},
-    {v:T_txns,    s:dataStyle(true,'center',WHITE,EMERALD)},
-    {v:T_revenue, s:moneyStyle(true,WHITE,EMERALD)},
-    {v:T_avg,     s:moneyStyle(true,WHITE,EMERALD)},
-    {v:'100.0%',  s:hdrStyle(EMERALD,WHITE,10)},
-    {v:'',        s:hdrStyle(EMERALD)},
+  s5.push([
+    totStr('TEAM TOTAL'),totCell(T_txns,FMT_INT,'center'),totCell(T_rev),
+    totCell(round2(T_avg)),emptyTot(),{v:'100.00%',t:'s',s:{font:fnt(WHITE,11,true),fill:fl(EMERALD),alignment:aln('center'),border:brd()}},
   ]);
 
-  const ws5=XLSX.utils.aoa_to_sheet(s5_data);
-  ws5['!merges']=[{s:{r:0,c:0},e:{r:0,c:5}}];
-  ws5['!cols']=[{wch:26},{wch:15},{wch:17},{wch:17},{wch:17},{wch:10}];
+  const ws5=XLSX.utils.aoa_to_sheet(s5);
+  ws5['!merges']=[{s:{r:0,c:0},e:{r:0,c:5}},{s:{r:1,c:0},e:{r:1,c:5}}];
+  setCols(ws5,[26,15,18,18,18,16]);
+  ws5['!freeze']={xSplit:0,ySplit:4};
   XLSX.utils.book_append_sheet(wb, ws5, 'Staff Performance');
 
-  // ── Write file ────────────────────────────────────────────
-  const filename = `TechPro_MonthEnd_${selectedMonth}.xlsx`;
-  XLSX.writeFile(wb, filename);
+  // ── Download ───────────────────────────────────────────────
+  const filename=`TechPro_${selectedMonth}_Report.xlsx`;
+  XLSX.writeFile(wb, filename, {bookType:'xlsx', type:'binary'});
 
-  if(statusEl) statusEl.innerHTML=`<div class="alert alert-green">✅ "${filename}" downloaded — open in Excel or Google Sheets.</div>`;
+  if(statusEl) statusEl.innerHTML=`<div class="alert alert-green">✅ "${filename}" downloaded — opens in Excel or Google Sheets with full formatting.</div>`;
   if(typeof addAudit==='function')
-    addAudit('EXPORT',`Month-end Excel exported: ${monthLabel} (${T_txns} invoices, CA$${T_revenue.toFixed(2)})`);
+    addAudit('EXPORT',`Excel exported: ${monthLabel} (${T_txns} invoices, CA$${T_rev.toFixed(2)})`);
 }
-
 function downloadCSV(filename, rows){
   const csv=rows.map(r=>r.map(cell=>`"${String(cell).replace(/"/g,'""')}"`).join(',')).join('\n');
   const blob=new Blob([csv],{type:'text/csv'});
