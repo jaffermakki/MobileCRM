@@ -1214,46 +1214,53 @@ async function sendReadySMS(r){
 
 // ── EMAIL RECEIPT — EmailJS ──────────────────────────
 async function sendEmailReceipt(inv, toEmail){
-  if(!settings.emailjsPublicKey||!settings.emailjsServiceId||!settings.emailjsTemplateId){
-    showAlert('global-alert','Email not configured — go to Settings → Email to set up EmailJS','amber');
+  // Validate configuration first
+  if(!settings.emailjsPublicKey){
+    alert('❌ EmailJS Public Key is missing – go to Settings → Email.');
     return false;
   }
+  if(!settings.emailjsServiceId){
+    alert('❌ EmailJS Service ID is missing – go to Settings → Email.');
+    return false;
+  }
+  if(!settings.emailjsTemplateId){
+    alert('❌ EmailJS Template ID is missing – go to Settings → Email.');
+    return false;
+  }
+
   try {
-    // Load EmailJS SDK if not already loaded
+    // Load EmailJS SDK if not loaded
     if(typeof window.emailjs === 'undefined'){
       await loadScript('https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js');
     }
+
+    // Initialize with your public key
     window.emailjs.init(settings.emailjsPublicKey);
 
-    // ✅ Build items array (matches your template's {{#each items}})
+    // Build items array
     const items = inv.lines.map(l => ({
-      description: l.name || 'Item',
+      description: l.name,
       sku: l.sku || '',
       qty: String(l.qty || 1),
       unit_price: Number(l.price || 0).toFixed(2),
       amount: Number((l.price || 0) * (l.qty || 1)).toFixed(2)
     }));
 
-    // ✅ Calculate total GST (matches your template's {{gst}})
-    let gst = Number(inv.totalTax || inv.hst || 0).toFixed(2);
-    // If no tax data, calculate it
+    // Calculate tax (HST or GST)
+    let gst = Number(inv.tax || 0).toFixed(2);
     if (parseFloat(gst) === 0 && inv.subtotal) {
-      const prov = CA_PROVINCES[inv.province || settings.province || 'ON'];
-      if (prov) {
-        const taxable = Math.max(0, (inv.subtotal || 0) - (inv.discount || 0));
-        const result = calcCanadianTax(taxable, prov);
-        gst = Number(result.totalTax).toFixed(2);
-      }
+      // Fallback: calculate 13% HST
+      gst = (inv.subtotal * 0.13).toFixed(2);
     }
 
-    // ✅ Send email with data matching your template
-    const result = await window.emailjs.send(settings.emailjsServiceId, settings.emailjsTemplateId, {
+    // Prepare data
+    const templateParams = {
       to_name: inv.customerName || 'Valued Customer',
       shop_name: settings.shopName || 'Tech-Pro+',
       shop_address: settings.shopAddress || 'Toronto, Ontario, Canada',
       invoice_number: inv.number || '',
-      invoice_date: inv.date ? new Date(inv.date).toLocaleDateString('en-CA', {year:'numeric', month:'long', day:'numeric'}) : '',
-      province: inv.province || settings.province || 'Ontario (ON)',
+      invoice_date: fmtDate(inv.date) || '',
+      province: settings.province || 'ON',
       bill_to: inv.customerName || 'Walk-in',
       payment_method: inv.payment || 'Cash',
       subtotal: Number(inv.subtotal || 0).toFixed(2),
@@ -1261,15 +1268,28 @@ async function sendEmailReceipt(inv, toEmail){
       gst_number: settings.shopGST || '',
       items: items,
       gst: gst
-    });
+    };
 
-    console.log('Email sent successfully:', result);
-    addAudit('EMAIL', `Receipt emailed to ${toEmail} for invoice ${inv.number}`);
-    showAlert('global-alert', `✅ Receipt sent to ${toEmail}`, 'green');
+    // Log what we're sending (check console)
+    console.log('📧 Sending email with data:', templateParams);
+
+    // Send the email
+    const response = await window.emailjs.send(
+      settings.emailjsServiceId,
+      settings.emailjsTemplateId,
+      templateParams
+    );
+
+    console.log('✅ Email sent successfully:', response);
+    alert('✅ Receipt sent to ' + toEmail);
     return true;
-  } catch(e){
-    console.error('EmailJS error:', e);
-    showAlert('global-alert', 'Email failed: ' + e.message, 'red');
+
+  } catch (error) {
+    // Detailed error logging
+    console.error('❌ EmailJS error details:', error);
+    // Check if error has a text property (common in EmailJS)
+    const errorMessage = error.text || error.message || 'Unknown error (see console for details)';
+    alert('❌ Email failed: ' + errorMessage);
     return false;
   }
 }
