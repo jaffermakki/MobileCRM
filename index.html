@@ -1220,10 +1220,13 @@ async function sendEmailReceipt(inv, toEmail){
     return false;
   }
   try {
-    await loadScript('https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js');
+    // Load EmailJS SDK
+    if(typeof window.emailjs === 'undefined'){
+      await loadScript('https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js');
+    }
     window.emailjs.init(settings.emailjsPublicKey);
 
-    // ✅ Build line_items array (objects)
+    // ✅ Build line_items array
     const lineItems = inv.lines.map(l => ({
       description: l.name || 'Item',
       sku: l.sku || '',
@@ -1232,7 +1235,7 @@ async function sendEmailReceipt(inv, toEmail){
       amount: Number((l.price || 0) * (l.qty || 1)).toFixed(2)
     }));
 
-    // ✅ Build tax_summary array (objects)
+    // ✅ Build tax_summary array
     let taxSummary = [];
     if (inv.taxLines && inv.taxLines.length) {
       taxSummary = inv.taxLines.map(t => ({
@@ -1241,20 +1244,24 @@ async function sendEmailReceipt(inv, toEmail){
         amount: Number(t.amount || 0).toFixed(2)
       }));
     } else {
-      // Fallback: calculate taxes from inv.gst/pst/hst if available
+      // Fallback: calculate taxes from invoice data
       const prov = CA_PROVINCES[inv.province || settings.province || 'ON'];
       if (prov) {
-        const result = calcCanadianTax(inv.subtotal || 0, prov);
+        const taxable = Math.max(0, (inv.subtotal || 0) - (inv.discount || 0));
+        const result = calcCanadianTax(taxable, prov);
         taxSummary = result.lines.map(t => ({
           name: t.label,
-          rate: t.label.includes('GST') ? prov.gst : (t.label.includes('PST') ? prov.pst : (t.label.includes('QST') ? prov.pst : prov.hst)),
+          rate: t.label.includes('GST') ? prov.gst : 
+                t.label.includes('PST') ? prov.pst : 
+                t.label.includes('QST') ? prov.pst : 
+                prov.hst || '0',
           amount: Number(t.amount).toFixed(2)
         }));
       }
     }
 
-    // ✅ Send with correct array data
-    await window.emailjs.send(settings.emailjsServiceId, settings.emailjsTemplateId, {
+    // ✅ Send email
+    const result = await window.emailjs.send(settings.emailjsServiceId, settings.emailjsTemplateId, {
       to_name: inv.customerName || 'Valued Customer',
       shop_name: settings.shopName || 'Tech-Pro+',
       shop_address: settings.shopAddress || 'Toronto, Ontario, Canada',
@@ -1266,10 +1273,11 @@ async function sendEmailReceipt(inv, toEmail){
       subtotal: Number(inv.subtotal || 0).toFixed(2),
       total: Number(inv.total || 0).toFixed(2),
       gst_number: settings.shopGST || '',
-      line_items: lineItems,      // ✅ array
-      tax_summary: taxSummary     // ✅ array
+      line_items: lineItems,
+      tax_summary: taxSummary
     });
 
+    console.log('Email sent successfully:', result);
     addAudit('EMAIL', `Receipt emailed to ${toEmail} for invoice ${inv.number}`);
     showAlert('global-alert', `✅ Receipt sent to ${toEmail}`, 'green');
     return true;
@@ -1279,7 +1287,6 @@ async function sendEmailReceipt(inv, toEmail){
     return false;
   }
 }
-
 const STATUS_LABELS = {
   RECEIVED:'Received', DIAGNOSED:'Diagnosed',
   WAITING:'Waiting for Parts', IN_PROGRESS:'In Progress',
