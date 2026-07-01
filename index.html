@@ -1212,8 +1212,6 @@ async function sendReadySMS(r){
   }
 }
 
-// EMAIL RECEIPT — EmailJS
-// ══════════════════════════════════════════════════════════
 // ── EMAIL RECEIPT — EmailJS ──────────────────────────
 async function sendEmailReceipt(inv, toEmail){
   if(!settings.emailjsPublicKey||!settings.emailjsServiceId||!settings.emailjsTemplateId){
@@ -1276,23 +1274,23 @@ async function sendEmailReceipt(inv, toEmail){
   }
 }
 
-  // ── Email Invoice by ID (for Dashboard & Refunds) ──
+// ── Email Invoice by ID (for Dashboard & Refunds) ──
 function emailInvoice(invoiceId){
   const inv = invoices.find(i => i.id === invoiceId);
   if(!inv){
     showAlert('global-alert', 'Invoice not found', 'red');
     return false;
   }
-  
+
   // Get customer email from invoice
   let email = inv.customerEmail || '';
-  
+
   // If no email in invoice, try to find customer
   if(!email && inv.customerId){
     const cust = customers.find(c => c.id === inv.customerId);
     if(cust) email = cust.email || '';
   }
-  
+
   // If still no email, prompt the user
   if(!email){
     email = prompt('Enter the customer\'s email address to send this receipt:');
@@ -1301,62 +1299,11 @@ function emailInvoice(invoiceId){
       return false;
     }
   }
-  
+
   // Call the main sendEmailReceipt function
   sendEmailReceipt(inv, email);
 }
-    // ✅ Build tax_summary array
-    let taxSummary = [];
-    if (inv.taxLines && inv.taxLines.length) {
-      taxSummary = inv.taxLines.map(t => ({
-        name: t.label || 'Tax',
-        rate: String(t.rate || '0'),
-        amount: Number(t.amount || 0).toFixed(2)
-      }));
-    } else {
-      // Fallback: calculate taxes from invoice data
-      const prov = CA_PROVINCES[inv.province || settings.province || 'ON'];
-      if (prov) {
-        const taxable = Math.max(0, (inv.subtotal || 0) - (inv.discount || 0));
-        const result = calcCanadianTax(taxable, prov);
-        taxSummary = result.lines.map(t => ({
-          name: t.label,
-          rate: t.label.includes('GST') ? prov.gst : 
-                t.label.includes('PST') ? prov.pst : 
-                t.label.includes('QST') ? prov.pst : 
-                prov.hst || '0',
-          amount: Number(t.amount).toFixed(2)
-        }));
-      }
-    }
 
-    // ✅ Send email
-    const result = await window.emailjs.send(settings.emailjsServiceId, settings.emailjsTemplateId, {
-      to_name: inv.customerName || 'Valued Customer',
-      shop_name: settings.shopName || 'Tech-Pro+',
-      shop_address: settings.shopAddress || 'Toronto, Ontario, Canada',
-      invoice_number: inv.number || '',
-      invoice_date: inv.date ? new Date(inv.date).toLocaleDateString('en-CA', {year:'numeric', month:'long', day:'numeric'}) : '',
-      province: inv.province || settings.province || 'Ontario (ON)',
-      bill_to: inv.customerName || 'Walk-in',
-      payment_method: inv.payment || 'Cash',
-      subtotal: Number(inv.subtotal || 0).toFixed(2),
-      total: Number(inv.total || 0).toFixed(2),
-      gst_number: settings.shopGST || '',
-      line_items: lineItems,
-      tax_summary: taxSummary
-    });
-
-    console.log('Email sent successfully:', result);
-    addAudit('EMAIL', `Receipt emailed to ${toEmail} for invoice ${inv.number}`);
-    showAlert('global-alert', `✅ Receipt sent to ${toEmail}`, 'green');
-    return true;
-  } catch(e){
-    console.error('EmailJS error:', e);
-    showAlert('global-alert', 'Email failed: ' + e.message, 'red');
-    return false;
-  }
-}
 const STATUS_LABELS = {
   RECEIVED:'Received', DIAGNOSED:'Diagnosed',
   WAITING:'Waiting for Parts', IN_PROGRESS:'In Progress',
