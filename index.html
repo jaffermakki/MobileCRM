@@ -1215,6 +1215,8 @@ async function sendReadySMS(r){
 // ── EMAIL RECEIPT — EmailJS ──────────────────────────
 // EMAIL RECEIPT — EmailJS
 // ══════════════════════════════════════════════════════════
+// EMAIL RECEIPT — EmailJS
+// ══════════════════════════════════════════════════════════
 async function sendEmailReceipt(inv, toEmail){
   // Validate configuration first
   if(!settings.emailjsPublicKey || !settings.emailjsServiceId || !settings.emailjsTemplateId){
@@ -1228,42 +1230,40 @@ async function sendEmailReceipt(inv, toEmail){
       await loadScript('https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js');
     }
 
-    // Initialize with your public key (Object syntax is required for v4)
+    // Initialize with your public key 
     window.emailjs.init({
       publicKey: settings.emailjsPublicKey
     });
 
-    // Format line items as a single TEXT block so it displays correctly in the email
-    const lineItemsStr = inv.lines.map(l => 
-      `${l.name} ×${l.qty || 1} — $${Number((l.price || 0) * (l.qty || 1)).toFixed(2)}`
-    ).join('\n');
+    // 1. Build the Array of Objects exactly as your HTML template expects for {{#each items}}
+    const itemsArray = inv.lines.map(l => ({
+      description: l.name,
+      sku: l.sku || 'N/A',
+      qty: String(l.qty || 1),
+      unit_price: Number(l.price || 0).toFixed(2),
+      amount: Number((l.price || 0) * (l.qty || 1)).toFixed(2)
+    }));
 
-    // Calculate tax (HST or GST)
+    // 2. Calculate tax (HST or GST)
     let gst = Number(inv.tax || 0).toFixed(2);
     if (parseFloat(gst) === 0 && inv.subtotal) {
-      // Fallback: calculate 13% HST
       gst = (inv.subtotal * 0.13).toFixed(2);
     }
 
-    // Prepare data
+    // 3. Prepare data matching the template variables
     const templateParams = {
-      to_email: toEmail,  // <--- CRITICAL: This was missing in your code!
-      to_name: inv.customerName || 'Valued Customer',
-      shop_name: settings.shopName || 'Tech-Pro+',
-      shop_address: settings.shopAddress || 'Toronto, Ontario, Canada',
+      to_email: toEmail, 
+      bill_to: inv.customerName || 'Walk-in',
+      province: settings.province || 'ON',
       invoice_number: inv.number || '',
       invoice_date: fmtDate(inv.date) || '',
-      province: settings.province || 'ON',
-      bill_to: inv.customerName || 'Walk-in',
-      payment_method: inv.payment || 'Cash',
       subtotal: Number(inv.subtotal || 0).toFixed(2),
+      gst: gst,
       total: Number(inv.total || 0).toFixed(2),
-      gst_number: settings.shopGST || '',
-      line_items: lineItemsStr, // Passes the nicely formatted string
-      gst: gst
+      payment_method: inv.payment || 'Cash',
+      items: itemsArray // <--- THIS is what makes your HTML table work
     };
 
-    // Log what we're sending (check browser console F12)
     console.log('📧 Sending email with data:', templateParams);
 
     // Send the email
@@ -1274,18 +1274,13 @@ async function sendEmailReceipt(inv, toEmail){
     );
 
     console.log('✅ Email sent successfully:', response);
-    
-    // Use the CRM's beautiful UI alert instead of ugly browser alerts
     showAlert('global-alert', `✅ Receipt sent to ${toEmail}`, 'green');
     addAudit('EMAIL', `Receipt emailed to ${toEmail} for invoice ${inv.number}`);
     return true;
 
   } catch (error) {
-    // Detailed error logging
     console.error('❌ EmailJS error details:', error);
-    // Check if error has a text property (common in EmailJS)
     const errorMessage = error.text || error.message || JSON.stringify(error) || 'Unknown error';
-    
     showAlert('global-alert', '❌ Email failed: ' + errorMessage, 'red');
     return false;
   }
